@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+// gh-me: run gh as the account configured in ~/.dev-harness/config.json.
+import { spawnSync } from 'node:child_process';
+import { loadConfig } from '../lib/config.mjs';
+import { resolveToken, findGh } from '../lib/identity.mjs';
+
+const gh = findGh();
+if (!gh) {
+  process.stderr.write('gh-me: gh CLI not found on PATH\n');
+  process.exit(127);
+}
+const cfg = loadConfig();
+const token = resolveToken(cfg);
+const env = { ...process.env, GH_HOST: process.env.GH_HOST || 'github.com' };
+if (token) env.GH_TOKEN = token;
+else if (cfg.github.account) {
+  process.stderr.write(`gh-me: no token for ${cfg.github.account}; run \`gh auth login\` for that account or set github.tokenEnv. Using gh defaults.\n`);
+}
+const res = spawnSync(gh, process.argv.slice(2), { stdio: 'inherit', env });
+process.exit(res.status ?? 1);

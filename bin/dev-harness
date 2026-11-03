@@ -1,0 +1,287 @@
+#!/usr/bin/env node
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { createInterface } from 'node:readline/promises';
+import {
+  loadConfig, configPath, merge, preferredToken,
+} from '../lib/config.mjs';
+import {
+  makeGitInfo, unlockShip, lockShip, credHelperOk, credentialHelpers,
+} from '../lib/git.mjs';
+import { validateBranch, suggestBranch } from '../lib/rules.mjs';
+import { detectRepo, renderProfile } from '../lib/profile.mjs';
+import { localPaths, slugFile, buildSessionContext } from '../lib/context.mjs';
+import { installCredentialHelper } from '../lib/credential.mjs';
+import { resolveToken, findGh } from '../lib/identity.mjs';
+import {
+  collectDiff, agentBody, buildReviewPrompt, runCopilotReview, writeTemp,
+} from '../lib/review.mjs';
+import { audit, loadDenylist } from '../lib/audit.mjs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const [cmd, ...argv] = process.argv.slice(2);
+
+function opt(name, fallback) {
+  const i = argv.indexOf(`--${name}`);
+  if (i < 0) return fallback;
+  const v = argv[i + 1];
+  return v === undefined || v.startsWith('--') ? true : v;
+}
+function opts(name) {
+  const out = [];
+  argv.forEach((a, i) => { if (a === `--${name}` && argv[i + 1]) out.push(argv[i + 1]); });
+  return out;
+}
+const VALUE_OPTS = new Set(['--account', '--token-env', '--forbid', '--rule', '--minutes', '--kind', '--base', '--model', '--plan']);
+const positional = () => argv.filter((a, i) => !a.startsWith('--') && !VALUE_OPTS.has(argv[i - 1]));
+
+const cwd = process.cwd();
+const cfg = loadConfig();
+const info = () => makeGitInfo()(cwd);
+
+const HELP = `dev-harness — workflow harness for Copilot & Claude Code
+
+Usage: dev-harness <command> [options]
+
+Setup
+  init [--account <gh-user>] [--token-env <VAR>] [--forbid <substr>]... [--rule <owner/repo:maxLen>]...
+                          Create ~/.dev-harness/config.json and the local overlay (interactive if no flags)
+  doctor [--fix]          Check prerequisites, identity, hooks; --fix installs the git credential helper
+  profile init [path]     Generate a repo profile into the local overlay (default: cwd)
+
+Ship gate
+  status                  Show repo, branch, gate state and identity
+  unlock [--minutes N]    Allow commit/push/PR in this repo for N minutes (default from config)
+  lock                    Re-lock immediately
+
+Branches
+  branch check <name>     Validate a branch name for this repo
+  branch suggest <text>   Suggest a compliant branch name
+
+Review & knowledge
+  diff [--base <ref>]     Write the change (committed + uncommitted + untracked vs merge-base) to a file; print its path
+  review --kind code|security [--base <ref>] [--model <id>] [--plan <file>]
+                          Cross-family fresh-context review via the Copilot CLI (read-only)
+  lesson add "<text>" [--global]
+                          Append a lesson for this repo (or global)
+  handoff path            Print the handoff file path for this repo/branch
+  context                 Print the context injected at session start
+  audit [path] [--staged] Scan for secrets, personal paths, denylisted identifiers
+`;
+
+async function ask(rl, q, def) {
+  const a = (await rl.question(`${q}${def ? ` [${def}]` : ''}: `)).trim();
+  return a || def || '';
+}
+
+async function init() {
+  const path = configPath();
+  const existing = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+  let account = opt('account');
+  let tokenEnv = opt('token-env');
+  let forbid = opts('forbid');
+  let rules = opts('rule');
+  const interactive = process.stdin.isTTY && account === undefined;
+  if (interactive) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    account = await ask(rl, 'GitHub account to use for all git/gh activity', existing.github?.account);
+    tokenEnv = await ask(rl, 'Env var holding that account\'s token (blank = use `gh auth token --user`)', existing.github?.tokenEnv);
+    const f = await ask(rl, 'Substrings forbidden in branch names, comma-separated (e.g. your username)', (existing.git?.branch?.forbidSubstrings || []).join(','));
+    forbid = f.split(',').map((s) => s.trim()).filter(Boolean);
+    const r = await ask(rl, 'Per-repo max branch length rules, comma-separated owner/repo:N', '');
+    rules = r.split(',').map((s) => s.trim()).filter(Boolean);
+    rl.close();
+  }
+  const update = { github: {}, git: { branch: {} } };
+  if (typeof account === 'string') update.github.account = account;
+  if (typeof tokenEnv === 'string') update.github.tokenEnv = tokenEnv;
+  if (forbid.length) update.git.branch.forbidSubstrings = forbid;
+  if (rules.length) {
+    const byLen = {};
+    for (const r of rules) {
+      const [repo, n] = r.split(':');
+      (byLen[n] ||= []).push(repo);
+    }
+    update.git.branch.rules = Object.entries(byLen).map(([n, repos]) => ({ repos, maxLength: Number(n) }));
+  }
+  const next = merge(existing, update);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
+  const lp = localPaths(loadConfig(path));
+  for (const d of [lp.base, lp.profiles, lp.lessons, lp.handoffs]) mkdirSync(d, { recursive: true });
+  if (!existsSync(lp.instructions)) {
+    writeFileSync(lp.instructions, '# Personal instructions\n\n<!-- Private preferences appended to the shared harness instructions. Not committed anywhere. -->\n');
+  }
+  if (!existsSync(lp.denylist)) {
+    writeFileSync(lp.denylist, '# One identifier per line (customer names, internal hostnames). Used by `dev-harness audit`.\n');
+  }
+  console.log(`Wrote ${path}\nLocal overlay: ${lp.base}`);
+}
+
+function check(label, ok, hint) {
+  console.log(`${ok ? '✓' : '✗'} ${label}${ok || !hint ? '' : `\n    → ${hint}`}`);
+  return ok;
+}
+
+function doctor() {
+  const fix = argv.includes('--fix');
+  const has = (bin, args = ['--version']) => spawnSync(bin, args, { stdio: 'ignore' }).status === 0;
+  let ok = true;
+  ok &= check(`node ${process.version}`, Number(process.versions.node.split('.')[0]) >= 20, 'install Node.js >= 20');
+  ok &= check('git', has('git'), 'install git');
+  ok &= check('gh CLI', Boolean(findGh()), 'install GitHub CLI: https://cli.github.com');
+  check('copilot CLI (cross-family review from Claude Code)', has('copilot'), 'optional: npm i -g @github/copilot');
+  check('gitleaks (optional extra secret scan)', has('gitleaks', ['version']), 'optional: brew install gitleaks');
+  ok &= check(`config ${configPath()}`, existsSync(configPath()), 'run `dev-harness init`');
+  if (cfg.github.account) {
+    const token = resolveToken(cfg);
+    ok &= check(`token for ${cfg.github.account}`, Boolean(token),
+      cfg.github.tokenEnv ? `set ${cfg.github.tokenEnv} or run \`gh auth login\` for ${cfg.github.account}` : `run \`gh auth login\` and add ${cfg.github.account}`);
+    let helper = credHelperOk(process.env.HOME);
+    if (!helper && fix) {
+      installCredentialHelper(join(ROOT, 'bin', 'git-credential-dev-harness'));
+      helper = credHelperOk(process.env.HOME);
+    }
+    ok &= check('git credential helper routes github.com to that account', helper,
+      `run \`dev-harness doctor --fix\` (current: ${JSON.stringify(credentialHelpers(process.env.HOME))})`);
+  }
+  const home = process.env.HOME;
+  check('Copilot hooks installed', existsSync(join(home, '.copilot', 'hooks', 'dev-harness.json')), 'run ./install.sh');
+  const claudeSettings = join(home, '.claude', 'settings.json');
+  check('Claude Code hooks installed', existsSync(claudeSettings) && readFileSync(claudeSettings, 'utf8').includes('dev-harness'), 'run ./install.sh (only needed if you use Claude Code)');
+  process.exitCode = ok ? 0 : 1;
+}
+
+function status() {
+  const i = info();
+  console.log(JSON.stringify({
+    repo: i.repo || null,
+    branch: i.branch || null,
+    shipGate: !i.isRepo ? 'n/a' : cfg.shipGate.enabled ? (i.shipUnlocked ? 'unlocked' : 'locked') : 'disabled',
+    account: cfg.github.account || null,
+    tokenAvailable: Boolean(preferredToken(cfg) || (cfg.github.account && resolveToken(cfg))),
+    credentialHelper: i.credHelperOk,
+    branchName: i.branch ? (validateBranch(i.branch, cfg, i.repo) || 'ok') : null,
+  }, null, 2));
+}
+
+function profileInit() {
+  const dir = resolve(positional()[1] || cwd);
+  const facts = detectRepo(dir);
+  if (!facts.repo) throw new Error(`${dir} has no github.com origin remote`);
+  const rule = (cfg.git.branch.rules || []).find((r) => r.repos.map((x) => x.toLowerCase()).includes(facts.repo.toLowerCase()));
+  const hint = `short, describes only the change${rule ? `, max ${rule.maxLength} chars` : ''}; check with \`dev-harness branch check <name>\``;
+  const out = join(localPaths(cfg).profiles, `${slugFile(facts.repo)}.md`);
+  if (existsSync(out) && !argv.includes('--force')) {
+    console.log(`Profile exists (use --force to regenerate): ${out}`);
+    return;
+  }
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, renderProfile(facts, hint));
+  console.log(`Wrote ${out}`);
+}
+
+function review() {
+  const kind = opt('kind', 'code');
+  if (!['code', 'security'].includes(kind)) throw new Error('--kind must be code or security');
+  const model = opt('model', kind === 'code' ? cfg.review.codeModel : cfg.review.securityModel);
+  const { diff, base } = collectDiff(cwd, opt('base'));
+  if (!diff.trim()) { console.log('No changes to review.'); return; }
+  const diffPath = writeTemp('change.diff', diff);
+  const i = info();
+  const profileFile = i.repo ? join(localPaths(cfg).profiles, `${slugFile(i.repo)}.md`) : '';
+  const prompt = buildReviewPrompt({
+    body: agentBody(join(ROOT, 'agents', `${kind}-reviewer.agent.md`)),
+    diffPath,
+    planPath: opt('plan') ? resolve(opt('plan')) : '',
+    profile: profileFile && existsSync(profileFile) ? readFileSync(profileFile, 'utf8') : '',
+    base,
+  });
+  const res = runCopilotReview({ dir: cwd, prompt, model, diffPath });
+  if (res.error) throw new Error(`copilot CLI failed: ${res.error.message}`);
+  process.stdout.write(res.stdout || '');
+  if (res.status) { process.stderr.write(res.stderr || ''); process.exitCode = res.status; }
+}
+
+function diffFile() {
+  const { diff, base, mergeBase } = collectDiff(cwd, opt('base'));
+  if (!diff.trim()) { console.log('No changes.'); process.exitCode = 1; return; }
+  const p = writeTemp('change.diff', diff);
+  console.log(p);
+  process.stderr.write(`diff vs ${base} (merge-base ${mergeBase.slice(0, 10)}), ${diff.split('\n').length} lines\n`);
+}
+
+function lesson() {
+  const text = positional().slice(1).join(' ').trim();
+  if (!text) throw new Error('usage: dev-harness lesson add "<text>" [--global]');
+  const i = info();
+  const global = argv.includes('--global') || !i.repo;
+  const file = join(localPaths(cfg).lessons, global ? 'global.md' : `${slugFile(i.repo)}.md`);
+  mkdirSync(dirname(file), { recursive: true });
+  if (!existsSync(file)) writeFileSync(file, `# Lessons — ${global ? 'global' : i.repo}\n\n`);
+  const existing = readFileSync(file, 'utf8');
+  if (existing.toLowerCase().includes(text.toLowerCase())) { console.log(`Already recorded in ${file}`); return; }
+  appendFileSync(file, `- ${text} _(${new Date().toISOString().slice(0, 10)})_\n`);
+  console.log(`Recorded in ${file}`);
+}
+
+function handoffPath() {
+  const i = info();
+  if (!i.repo) throw new Error('not in a GitHub repository');
+  const p = join(localPaths(cfg).handoffs, slugFile(i.repo), `${(i.branch || 'detached').replace(/\//g, '__')}.md`);
+  mkdirSync(dirname(p), { recursive: true });
+  console.log(p);
+}
+
+function runAudit() {
+  const dir = resolve(positional()[0] || cwd);
+  const denylist = loadDenylist(localPaths(cfg).denylist);
+  const findings = audit(dir, { denylist, staged: argv.includes('--staged') });
+  let gl = '';
+  if (spawnSync('gitleaks', ['version'], { stdio: 'ignore' }).status === 0) {
+    const r = spawnSync('gitleaks', ['detect', '--no-banner', '--redact', '-s', dir, ...(argv.includes('--staged') ? ['--staged'] : ['--no-git'])], { encoding: 'utf8' });
+    if (r.status) gl = r.stdout + r.stderr;
+  }
+  for (const f of findings) console.log(`${f.file}:${f.line}  ${f.kind}`);
+  if (gl) console.log(gl);
+  if (findings.length || gl) { console.log(`\n✗ audit found ${findings.length} issue(s)${gl ? ' + gitleaks findings' : ''}`); process.exitCode = 1; } else console.log('✓ audit clean');
+}
+
+async function main() {
+  switch (cmd) {
+    case 'init': return init();
+    case 'doctor': return doctor();
+    case 'status': return status();
+    case 'unlock': {
+      const minutes = Number(opt('minutes', cfg.shipGate.ttlMinutes));
+      const { expires } = unlockShip(cwd, minutes);
+      return console.log(`Ship gate unlocked for ${info().repo || cwd} until ${new Date(expires).toLocaleTimeString()}`);
+    }
+    case 'lock': lockShip(cwd); return console.log('Ship gate locked');
+    case 'branch': {
+      const [sub, ...rest] = positional();
+      const name = rest.join(' ');
+      if (sub === 'check') {
+        const err = validateBranch(name, cfg, info().repo);
+        console.log(err || `ok: ${name}`);
+        process.exitCode = err ? 1 : 0;
+        return undefined;
+      }
+      if (sub === 'suggest') return console.log(suggestBranch(name, cfg, info().repo));
+      throw new Error('usage: dev-harness branch check|suggest <name>');
+    }
+    case 'profile': return profileInit();
+    case 'review': return review();
+    case 'diff': return diffFile();
+    case 'lesson': return lesson();
+    case 'handoff': return handoffPath();
+    case 'context': return console.log(buildSessionContext(cfg, info()));
+    case 'audit': return runAudit();
+    case undefined: case 'help': case '--help': case '-h': return console.log(HELP);
+    default: throw new Error(`unknown command: ${cmd}\n\n${HELP}`);
+  }
+}
+
+main().catch((e) => { console.error(`dev-harness: ${e.message}`); process.exitCode = 1; });

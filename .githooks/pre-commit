@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Blocks commits containing secrets, personal absolute paths or denylisted identifiers.
+# Enable with: git config core.hooksPath .githooks
+exec node "$(git rev-parse --show-toplevel)/bin/dev-harness" audit "$(git rev-parse --show-toplevel)" --staged

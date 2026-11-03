@@ -1,0 +1,36 @@
+{
+  "name": "feature-graph",
+  "description": "Multi-repo feature graph for an APPROVED plan: parallel per-repo implement+verify (local only, no commits) → independent code + security review per repo on a different model family → bounded fix loop → cross-repo contract check → consolidated ready-to-ship data. args: { goal: string, planPath: string, repos: [{ path, repo, branch, base? }], authorFamily?: 'claude'|'gpt', reviewModel?: string, maxFixRounds?: number }",
+  "phases": [
+    { "title": "Implement & verify" },
+    { "title": "Independent review" },
+    { "title": "Fix round 1" },
+    { "title": "Fix round 2" },
+    { "title": "Cross-repo contract check" },
+    { "title": "Summary" }
+  ],
+  "argsSchema": {
+    "type": "object",
+    "required": ["goal", "planPath", "repos"],
+    "properties": {
+      "goal": { "type": "string" },
+      "planPath": { "type": "string" },
+      "authorFamily": { "type": "string", "enum": ["claude", "gpt"] },
+      "reviewModel": { "type": "string" },
+      "maxFixRounds": { "type": "integer" },
+      "repos": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["path", "repo", "branch"],
+          "properties": {
+            "path": { "type": "string" },
+            "repo": { "type": "string" },
+            "branch": { "type": "string" },
+            "base": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

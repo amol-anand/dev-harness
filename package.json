@@ -1,0 +1,20 @@
+{
+  "name": "dev-harness",
+  "version": "0.1.0",
+  "description": "A plan → implement → verify → fresh-context review → ship workflow harness for GitHub Copilot and Claude Code.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "dev-harness": "bin/dev-harness",
+    "gh-me": "bin/gh-me",
+    "git-credential-dev-harness": "bin/git-credential-dev-harness"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:install": "bash tests/install-cleanroom.sh",
+    "audit": "node bin/dev-harness audit ."
+  }
+}

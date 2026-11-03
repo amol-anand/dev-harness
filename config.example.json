@@ -1,0 +1,29 @@
+{
+  "github": {
+    "account": "your-github-handle",
+    "tokenEnv": "",
+    "enforce": "writes"
+  },
+  "git": {
+    "protectedBranches": ["main", "master"],
+    "branch": {
+      "maxLength": 40,
+      "forbidSubstrings": ["your-github-handle"],
+      "rules": [
+        { "repos": ["some-org/repo-with-short-branches"], "maxLength": 7 }
+      ]
+    }
+  },
+  "shipGate": {
+    "enabled": true,
+    "ttlMinutes": 30,
+    "excludeRepos": []
+  },
+  "review": {
+    "codeModel": "gpt-6.1-sol",
+    "securityModel": "gpt-6.1-sol",
+    "claudeCrossFamily": true,
+    "maxFixRounds": 2
+  },
+  "localDir": "~/.dev-harness/local"
+}
