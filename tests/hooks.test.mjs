@@ -88,3 +88,12 @@ test('session-start injects profile and lessons (both formats)', () => {
   const cl = run('session-start.mjs', { hook_event_name: 'SessionStart', session_id: 's', cwd: repo });
   assert.match(cl.hookSpecificOutput.additionalContext, /Ship gate: ON/);
 });
+
+test('handoff write/show/done via CLI and session-start listing', () => {
+  const cli = (args, input) => spawnSync('node', [join(ROOT, 'bin', 'dev-harness'), ...args], { cwd: repo, env, input, encoding: 'utf8' });
+  assert.match(cli(['handoff', 'write'], '# Plan\nStatus: implementing\n').stdout, /Wrote .*acme__web\/fix-nav\.md/);
+  assert.match(cli(['handoff', 'show']).stdout, /Status: implementing/);
+  assert.match(run('session-start.mjs', { cwd: repo }).additionalContext, /Open handoffs/);
+  cli(['handoff', 'done']);
+  assert.doesNotMatch(run('session-start.mjs', { cwd: repo }).additionalContext, /Open handoffs/);
+});

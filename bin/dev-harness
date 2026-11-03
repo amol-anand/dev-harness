@@ -66,7 +66,8 @@ Review & knowledge
                           Cross-family fresh-context review via the Copilot CLI (read-only)
   lesson add "<text>" [--global]
                           Append a lesson for this repo (or global)
-  handoff path            Print the handoff file path for this repo/branch
+  handoff show|write|path|done
+                          Read / replace (from stdin) / locate / close the handoff (plan + state) for this repo/branch
   context                 Print the context injected at session start
   audit [path] [--staged] Scan for secrets, personal paths, denylisted identifiers
 `;
@@ -227,12 +228,34 @@ function lesson() {
   console.log(`Recorded in ${file}`);
 }
 
-function handoffPath() {
+function handoffFile() {
   const i = info();
   if (!i.repo) throw new Error('not in a GitHub repository');
   const p = join(localPaths(cfg).handoffs, slugFile(i.repo), `${(i.branch || 'detached').replace(/\//g, '__')}.md`);
   mkdirSync(dirname(p), { recursive: true });
-  console.log(p);
+  return p;
+}
+
+async function handoff() {
+  const sub = positional()[0] || 'path';
+  const p = handoffFile();
+  if (sub === 'path') return console.log(p);
+  if (sub === 'show') {
+    if (!existsSync(p)) { console.log('(no handoff for this repo/branch)'); return undefined; }
+    return process.stdout.write(readFileSync(p, 'utf8'));
+  }
+  if (sub === 'write') {
+    let text = '';
+    for await (const chunk of process.stdin) text += chunk;
+    if (!text.trim()) throw new Error('usage: dev-harness handoff write < file  (or a heredoc)');
+    writeFileSync(p, text);
+    return console.log(`Wrote ${p}`);
+  }
+  if (sub === 'done') {
+    if (existsSync(p)) writeFileSync(p, readFileSync(p, 'utf8').replace(/Status: \S+/, 'Status: shipped'));
+    return console.log(`Marked shipped: ${p}`);
+  }
+  throw new Error('usage: dev-harness handoff path|show|write|done');
 }
 
 function runAudit() {
@@ -276,7 +299,7 @@ async function main() {
     case 'review': return review();
     case 'diff': return diffFile();
     case 'lesson': return lesson();
-    case 'handoff': return handoffPath();
+    case 'handoff': return handoff();
     case 'context': return console.log(buildSessionContext(cfg, info()));
     case 'audit': return runAudit();
     case undefined: case 'help': case '--help': case '-h': return console.log(HELP);
