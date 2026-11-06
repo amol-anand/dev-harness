@@ -7,6 +7,9 @@ changes with as little back-and-forth as possible.
 - **Every coding task goes through the `dev` skill**: intake → triage → plan (plan-first for anything non-trivial) →
   branch → surgical local implementation → verify → independent code + security review in fresh context → fix loop →
   ready-to-ship summary → stop.
+- **Plan approval is mandatory for anything beyond a super-minor tweak, in every mode including autopilot**: write the
+  plan, present it, stop, and continue only after the user explicitly approves (`dev-harness plan approve`). A hook
+  blocks larger edits until then.
 - **Shipping is a separate, explicit step**: commit/push/PR only after the user says "ship" (or explicitly asks), via the
   `ship` skill. Until then changes stay local so the user can inspect them. A guard hook enforces this.
 - **Reviewing others' PRs** → `review-pr` skill. **Pausing/resuming** → `handoff` skill. **Corrections** → `lessons` skill.
@@ -29,4 +32,6 @@ changes with as little back-and-forth as possible.
 - Use the GitHub account configured in `~/.dev-harness/config.json` for all git/GitHub activity: `gh-me` for gh
   commands; git pushes authenticate via the dev-harness credential helper. Use another account only when told to.
 - Branch names: short, describe only the change, never include usernames. Per-repo limits live in the config.
+- Create branches yourself with `git switch -c <name>` (after `dev-harness branch check <name>`); never use the app's
+  branch tools such as `rename_branch`. If the app pre-created a branch, replace it with yours before editing.
 - Never commit to or push the default branch. No plain force-pushes.

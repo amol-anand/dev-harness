@@ -84,6 +84,7 @@ if [ "$UNINSTALL" = 1 ]; then
     done < "$MANIFEST"
   fi
   [ -f "$CLAUDE_DIR/settings.json" ] && run $HELP claude-hooks "$CLAUDE_DIR/settings.json" remove "$NODE" && say "  removed Claude Code hooks"
+  for s in "$COPILOT_DIR/settings.json" "$CLAUDE_DIR/settings.json"; do run $HELP restore-model "$s"; done
   if [ "$DO_CRED" = 1 ] && git config --global --get-all credential.https://github.com.helper 2>/dev/null | grep -q git-credential-dev-harness; then
     run "$NODE" -e "import('$HARNESS/lib/credential.mjs').then(m=>m.uninstallCredentialHelper())"
     say "  restored previous git credential helpers"
@@ -137,6 +138,8 @@ if [ "$DO_COPILOT" = 1 ]; then
   if [ "$DRY" = 0 ]; then mkdir -p "$COPILOT_DIR/hooks"; $HELP copilot-hooks "$COPILOT_DIR/hooks/dev-harness.json" "$NODE"; record "$COPILOT_DIR/hooks/dev-harness.json"; fi
   say "  hooks → $COPILOT_DIR/hooks/dev-harness.json"
   [ "$DO_INSTR" = 1 ] && link "$GEN/instructions.md" "$COPILOT_DIR/copilot-instructions.md"
+  M="$($HELP dev-model copilot)"
+  if [ -n "$M" ]; then run $HELP set-model "$COPILOT_DIR/settings.json" "$M"; say "  default model → $M"; fi
 fi
 
 # ---------- Claude Code ----------
@@ -150,6 +153,8 @@ if [ "$DO_CLAUDE" = 1 ] && { [ -d "$CLAUDE_DIR" ] || command -v claude >/dev/nul
   fi
   say "  hooks merged into $CLAUDE_DIR/settings.json"
   [ "$DO_INSTR" = 1 ] && link "$GEN/instructions.md" "$CLAUDE_DIR/CLAUDE.md"
+  M="$($HELP dev-model claude)"
+  if [ -n "$M" ]; then run $HELP set-model "$CLAUDE_DIR/settings.json" "$M"; say "  default model → $M"; fi
 elif [ "$DO_CLAUDE" = 1 ]; then
   say "• Claude Code not detected — skipped"
 fi

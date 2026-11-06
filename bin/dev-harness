@@ -5,14 +5,17 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import {
-  loadConfig, configPath, merge, preferredToken,
+  loadConfig, configPath, merge, preferredToken, modelFamily,
 } from '../lib/config.mjs';
 import {
   makeGitInfo, unlockShip, lockShip, credHelperOk, credentialHelpers,
 } from '../lib/git.mjs';
 import { validateBranch, suggestBranch } from '../lib/rules.mjs';
 import { detectRepo, renderProfile } from '../lib/profile.mjs';
-import { localPaths, slugFile, buildSessionContext } from '../lib/context.mjs';
+import {
+  localPaths, slugFile, buildSessionContext, handoffPathFor,
+} from '../lib/context.mjs';
+import { approvePlan, revokePlan, isPlanApproved } from '../lib/plangate.mjs';
 import { installCredentialHelper } from '../lib/credential.mjs';
 import { resolveToken, findGh } from '../lib/identity.mjs';
 import {
@@ -59,6 +62,11 @@ Ship gate
 Branches
   branch check <name>     Validate a branch name for this repo
   branch suggest <text>   Suggest a compliant branch name
+
+Plan gate
+  plan status             Show whether this branch has a written / approved plan
+  plan approve            Record the user's explicit approval of the written plan (unblocks larger edits)
+  plan revoke             Withdraw approval (e.g. scope changed)
 
 Review & knowledge
   diff [--base <ref>]     Write the change (committed + uncommitted + untracked vs merge-base) to a file; print its path
@@ -148,7 +156,18 @@ function doctor() {
     ok &= check('git credential helper routes github.com to that account', helper,
       `run \`dev-harness doctor --fix\` (current: ${JSON.stringify(credentialHelpers(process.env.HOME))})`);
   }
+  const devFam = modelFamily(cfg.dev.model);
+  for (const [k, m] of [['code', cfg.review.codeModel], ['security', cfg.review.securityModel]]) {
+    ok &= check(`${k} reviewer ${m} is a different model family from dev model ${cfg.dev.model}`, modelFamily(m) !== devFam,
+      `set review.${k}Model to a non-${devFam} model in ${configPath()}`);
+  }
   const home = process.env.HOME;
+  for (const [label, file, want] of [['Copilot', join(home, '.copilot', 'settings.json'), cfg.dev.model], ['Claude Code', join(home, '.claude', 'settings.json'), cfg.dev.claudeModel]]) {
+    if (!cfg.dev.setDefaults || !existsSync(file)) continue;
+    let cur = null;
+    try { cur = JSON.parse(readFileSync(file, 'utf8')).model ?? null; } catch { /* unreadable */ }
+    check(`${label} default model = ${want}`, cur === want, `currently ${cur ?? 'unset'} — re-run ./install.sh, or pick ${want} in the model picker`);
+  }
   check('Copilot hooks installed', existsSync(join(home, '.copilot', 'hooks', 'dev-harness.json')), 'run ./install.sh');
   const claudeSettings = join(home, '.claude', 'settings.json');
   check('Claude Code hooks installed', existsSync(claudeSettings) && readFileSync(claudeSettings, 'utf8').includes('dev-harness'), 'run ./install.sh (only needed if you use Claude Code)');
@@ -231,7 +250,7 @@ function lesson() {
 function handoffFile() {
   const i = info();
   if (!i.repo) throw new Error('not in a GitHub repository');
-  const p = join(localPaths(cfg).handoffs, slugFile(i.repo), `${(i.branch || 'detached').replace(/\//g, '__')}.md`);
+  const p = handoffPathFor(cfg, i.repo, i.branch);
   mkdirSync(dirname(p), { recursive: true });
   return p;
 }
@@ -272,6 +291,28 @@ function runAudit() {
   if (findings.length || gl) { console.log(`\n✗ audit found ${findings.length} issue(s)${gl ? ' + gitleaks findings' : ''}`); process.exitCode = 1; } else console.log('✓ audit clean');
 }
 
+function plan() {
+  const sub = positional()[0] || 'status';
+  const i = info();
+  if (!i.isRepo) throw new Error('not in a git repository');
+  const root = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).stdout.trim();
+  if (sub === 'approve') {
+    const hp = i.repo ? handoffPathFor(cfg, i.repo, i.branch) : '';
+    if (!hp || !existsSync(hp) || !readFileSync(hp, 'utf8').trim()) {
+      throw new Error('no plan for this branch — write it first with `dev-harness handoff write`');
+    }
+    approvePlan(root, i.branch);
+    return console.log(`Plan approved for ${i.repo}@${i.branch}. Run only after the user explicitly approved it.`);
+  }
+  if (sub === 'revoke') { revokePlan(root); return console.log('Plan approval revoked'); }
+  if (sub === 'status' || !sub) {
+    const hp = i.repo ? handoffPathFor(cfg, i.repo, i.branch) : '';
+    const exists = Boolean(hp && existsSync(hp));
+    return console.log(`plan: ${exists ? 'written' : 'none'} · approval: ${isPlanApproved(root, i.branch) ? 'approved' : 'not approved'} · gate: ${cfg.planGate.enabled ? `on (>${cfg.planGate.maxUnplannedFiles} files)` : 'off'}`);
+  }
+  throw new Error('usage: dev-harness plan status|approve|revoke');
+}
+
 async function main() {
   switch (cmd) {
     case 'init': return init();
@@ -300,6 +341,7 @@ async function main() {
     case 'diff': return diffFile();
     case 'lesson': return lesson();
     case 'handoff': return handoff();
+    case 'plan': return plan();
     case 'context': return console.log(buildSessionContext(cfg, info()));
     case 'audit': return runAudit();
     case undefined: case 'help': case '--help': case '-h': return console.log(HELP);

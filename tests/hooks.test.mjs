@@ -1,7 +1,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +82,24 @@ test('fail-safe: malformed input never blocks', () => {
   assert.equal(run('guard.mjs', { toolName: 'bash', toolArgs: { command: 'git commit -m x' }, cwd: repo }, { DEV_HARNESS_CONFIG: join(home, 'broken.json') }), null);
 });
 
+test('app branch tools are denied in favour of git', () => {
+  const out = run('guard.mjs', { toolName: 'rename_branch', toolArgs: { name: 'fix-nav' }, cwd: repo });
+  assert.equal(out.permissionDecision, 'deny');
+  assert.match(out.permissionDecisionReason, /git switch -c <name>/);
+});
+
+test('session-start flags an app-created branch that breaks the rules', () => {
+  assert.doesNotMatch(run('session-start.mjs', { cwd: repo }).additionalContext, /## Branch/);
+  execFileSync('git', ['-C', repo, 'switch', '-q', '-c', 'octo-dev-session'], { env });
+  try {
+    const c = run('session-start.mjs', { cwd: repo });
+    assert.match(c.additionalContext, /## Branch\nBranch "octo-dev-session" contains "octo"/);
+    assert.match(c.additionalContext, /git switch -c <name>/);
+  } finally {
+    execFileSync('git', ['-C', repo, 'switch', '-q', 'fix-nav'], { env });
+  }
+});
+
 test('session-start injects profile and lessons (both formats)', () => {
   const c = run('session-start.mjs', { sessionId: 's', cwd: repo, source: 'new' });
   assert.match(c.additionalContext, /Repo: acme\/web \(branch: fix-nav\)/);
@@ -96,4 +116,49 @@ test('handoff write/show/done via CLI and session-start listing', () => {
   assert.match(run('session-start.mjs', { cwd: repo }).additionalContext, /Open handoffs/);
   cli(['handoff', 'done']);
   assert.doesNotMatch(run('session-start.mjs', { cwd: repo }).additionalContext, /Open handoffs/);
+});
+
+test('plan gate end to end: blocks a 3rd file until plan written + approved', () => {
+  const cli = (args, input) => spawnSync('node', [join(ROOT, 'bin', 'dev-harness'), ...args], { cwd: repo, env, input, encoding: 'utf8' });
+  execFileSync('git', ['-C', repo, 'switch', '-q', '-c', 'gate-test'], { env });
+  try {
+    writeFileSync(join(repo, 'a.js'), '1');
+    writeFileSync(join(repo, 'b.js'), '2');
+    const edit = (p) => run('guard.mjs', { toolName: 'create', toolArgs: { path: p, file_text: 'x' }, cwd: repo });
+    assert.equal(edit('a.js'), null);
+    let out = edit('c.js');
+    assert.equal(out.permissionDecision, 'deny');
+    assert.match(out.permissionDecisionReason, /Plan gate: .*3 changed files.*Write the plan first/);
+    assert.match(cli(['plan', 'approve']).stderr, /no plan for this branch/);
+    cli(['handoff', 'write'], '# Plan\nStatus: planned\n');
+    out = run('guard.mjs', { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: join(repo, 'c.js') }, cwd: repo });
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /NOT approved/);
+    assert.match(cli(['plan', 'approve']).stdout, /Plan approved for acme\/web@gate-test/);
+    assert.equal(edit('c.js'), null);
+    assert.match(cli(['plan', 'status']).stdout, /plan: written · approval: approved/);
+    execFileSync('git', ['-C', repo, 'stash', '-u', '-q'], { env });
+    execFileSync('git', ['-C', repo, 'switch', '-q', 'fix-nav'], { env });
+    writeFileSync(join(repo, 'x.js'), '1');
+    writeFileSync(join(repo, 'y.js'), '1');
+    assert.equal(edit('z.js').permissionDecision, 'deny', 'approval is per branch');
+    assert.equal(edit('package.json').permissionDecision, 'deny');
+    writeFileSync(join(repo, 'package.json'), '{}');
+    execFileSync('git', ['-C', repo, 'add', 'package.json'], { env });
+    execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'pkg'], { env });
+    rmSync(join(repo, 'x.js')); rmSync(join(repo, 'y.js'));
+    symlinkSync(join(repo, 'package.json'), join(repo, 'notes.txt'));
+    execFileSync('git', ['-C', repo, 'add', 'notes.txt'], { env });
+    execFileSync('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'link'], { env });
+    assert.equal(edit('notes.txt').permissionDecision, 'deny', 'symlink to a contract file is gated');
+    const other = join(home, 'code', 'other');
+    mkdirSync(other, { recursive: true });
+    execFileSync('git', ['-C', other, 'init', '-q', '-b', 'main'], { env });
+    execFileSync('git', ['-C', other, 'remote', 'add', 'origin', 'https://github.com/acme/other.git'], { env });
+    const patch = `*** Begin Patch\n*** Update File: ${join(home, 'scratch.md')}\n*** Add File: ${join(other, 'package.json')}\n*** End Patch`;
+    assert.equal(run('guard.mjs', { toolName: 'apply_patch', toolArgs: { input: patch }, cwd: repo }).permissionDecision, 'deny', 'every repo in a patch is checked');
+  } finally {
+    for (const f of ['x.js', 'y.js']) rmSync(join(repo, f), { force: true });
+    execFileSync('git', ['-C', repo, 'switch', '-q', 'fix-nav'], { env });
+    cli(['plan', 'revoke']);
+  }
 });

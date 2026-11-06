@@ -39,7 +39,7 @@ Inputs: a PR URL or `owner/repo#number`. Use `gh-me` for every `gh` command.
 Fetch the previous review threads (`gh-me api repos/<o>/<r>/pulls/<n>/comments`), check each earlier finding against the
 new head (resolved / partially / not), then review only commits since the last review. Report and, on approval, post.
 
-## Mode C — triage comments on your own PR ("fix them if legit")
-List every unresolved comment, classify each **legit / not legit / needs discussion** with a one-line reason, and show
-the list. Fix the legit ones through the `dev` workflow (verify + review), then ship as a follow-up push and reply on
+## Mode C — address review comments on your own PR
+List every unresolved comment, classify each **valid / not valid / needs discussion** with a one-line reason, and show
+the list. Fix the valid ones through the `dev` workflow (verify + review), then ship as a follow-up push and reply on
 each thread with what changed (or why not).
