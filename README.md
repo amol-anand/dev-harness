@@ -1,12 +1,12 @@
 # dev-harness
 
-A personal **development workflow harness** for [GitHub Copilot](https://github.com/features/copilot) (app & CLI) and
-[Claude Code](https://www.anthropic.com/claude-code). It turns the instructions you keep typing ("plan first", "keep it
-surgical", "don't commit yet", "use my other GitHub account", "review it for security", "open a PR with a testing plan")
-into a repeatable graph that's enforced where it can be.
+A **development workflow harness** for [GitHub Copilot](https://github.com/features/copilot) (app & CLI) and
+[Claude Code](https://www.anthropic.com/claude-code). It gives coding agents one consistent process: plan before
+non-trivial changes, keep diffs small, verify, get an independent code and security review, and ship only when you
+say so. Where possible the rules are enforced by hooks rather than left to instructions.
 
 ```
-intake ─► triage ─► plan* ─► you approve ─► branch ─► implement (local only) ─► verify
+intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► implement (local only) ─► verify
                                                                                   │
           ┌──────────── fresh-context, different-model-family review ◄────────────┘
           │   code-reviewer  ║  security-reviewer      (parallel, read-only)
@@ -25,7 +25,8 @@ intake ─► triage ─► plan* ─► you approve ─► branch ─► implem
 | **`review-pr` skill** | Review someone else's PR, re-review after fixes, or triage comments on your own PR. Posts inline comments only after you approve. |
 | **`handoff` / `lessons` skills** | Pause and resume across sessions and tools; turn every correction into a durable rule. |
 | **`code-reviewer` / `security-reviewer` agents** | Independent reviewers that never see the author's conversation, pinned to a different model family. |
-| **Guard hook** (`preToolUse`) | Blocks commit/push/PR before you say "ship", pushes to `main`, plain force-pushes, badly named branches, and `gh` writes made with the wrong account. |
+| **Guard hook** (`preToolUse`) | Blocks commit/push/PR before you say "ship", pushes to `main`, plain force-pushes, badly named branches, the app's own branch tools, and `gh` writes made with the wrong account. |
+| **Plan gate** (same hook) | In every mode — including autopilot — file edits beyond a minor tweak (> 2 files, or contract files like `package.json`) are blocked until a plan is written and you've explicitly approved it (`dev-harness plan approve`). |
 | **Session-start hook** | Injects the repo profile, lessons and open handoffs into every new session. Also self-heals the git credential helper. |
 | **`gh-me` + credential helper** | Always act as *your* GitHub account, even when the host injects a different `GH_TOKEN`. |
 | **`feature-graph` workflow** | Copilot dynamic workflow that fans a multi-repo plan out to parallel implement/review agents. |
@@ -78,7 +79,9 @@ Your settings live in `~/.dev-harness/config.json` (see [`config.example.json`](
 | `git.protectedBranches` | Never commit or push directly to these. |
 | `git.branch.maxLength` / `forbidSubstrings` / `rules[]` | Branch naming policy. `rules` sets per-repo limits, e.g. `{ "repos": ["org/repo"], "maxLength": 7 }`. |
 | `shipGate.enabled` / `ttlMinutes` / `excludeRepos` | Ship gate on/off, how long an unlock lasts, and repos where it doesn't apply. |
-| `review.codeModel` / `securityModel` | Reviewer models for Copilot. Pick a different family from the one you usually code with. |
+| `dev.model` / `dev.claudeModel` / `dev.setDefaults` | Model that writes code (default `claude-opus-5.5`; `opus` in Claude Code). `install.sh` sets it as the default model in both runtimes (original restored on uninstall); `setDefaults: false` leaves your settings alone. |
+| `review.codeModel` / `securityModel` | Reviewer models (default `gpt-6.1-sol`). Must be a different family from `dev.model`; `doctor` checks this. |
+| `planGate.enabled` / `maxUnplannedFiles` / `contractFiles` / `excludeRepos` | Plan gate: how many changed files count as a minor tweak (default 2), which files always need a plan, and repos to skip. |
 | `review.maxFixRounds` | Review → fix iterations before handing back to you. |
 | `localDir` | Private overlay for profiles, lessons, handoffs, personal instructions and the audit denylist. |
 
@@ -106,14 +109,15 @@ Just ask for work as usual. The `dev` skill picks it up. Useful phrases:
 
 | You say | What happens |
 |---------|--------------|
-| "Fix X in repo Y" | Triage. If non-trivial: plan → your approval → build → verify → review → ready-to-ship summary |
+| "Fix X in repo Y" | Triage. If non-trivial: plan → **stops for your approval (any mode)** → build → verify → review → ready-to-ship summary |
+| **"approved"** | Records approval (`dev-harness plan approve`) and continues building |
 | **"ship"** | Commit + push as your account + PR with testing plan + Slack summary |
 | "review PR <url>" | Explanation + risks + independent findings; posts inline comments if you say so |
-| "the PR has comments, fix them if legit" | Triage legit/not-legit, fix via `dev`, reply on threads |
-| "pause" / "write down where we are" | Handoff written; listed automatically at the next session start |
-| "don't do X again" | Recorded as a lesson for this repo (or globally) |
+| "address the review comments on my PR" | Classify each comment (valid / not valid / needs discussion), fix valid ones via `dev`, reply on threads |
+| "pause" | Handoff written; listed automatically at the next session start |
+| A correction ("don't do X") | Recorded as a lesson for this repo (or globally) |
 
-Manual controls: `dev-harness status`, `dev-harness unlock` / `lock`, `dev-harness branch suggest "fix the nav overflow"`,
+Manual controls: `dev-harness status`, `dev-harness plan status|approve|revoke`, `dev-harness unlock` / `lock`, `dev-harness branch suggest "fix the nav overflow"`,
 `dev-harness review --kind security` (cross-family review from any terminal).
 
 ### Multi-repo features (Copilot)
@@ -161,7 +165,8 @@ helper) and keeps `~/.dev-harness/` for you to delete.
 
 ## Security notes
 
-- The guard is a **guardrail**, not a sandbox. It stops mistakes, not a determined agent.
+- The guard is a **guardrail**, not a sandbox. It stops mistakes, not a determined agent. The plan gate watches the
+  file-edit tools; edits made through shell commands (e.g. `sed -i`) are not counted.
 - Command `preToolUse` hooks in Copilot are fail-closed, so the guard catches every internal error and exits cleanly.
   A broken config can't lock you out of your tools.
 - Tokens are never stored by the harness. The credential helper reads them at call time from the env var you name or

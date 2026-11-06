@@ -5,8 +5,12 @@ async (ctx) => {
     throw new Error('args required: { goal, plan (approved plan text), repos: [{ path, repo, branch }], authorFamily?, maxFixRounds? }');
   }
   const planBlock = `Approved plan:\n<<<PLAN\n${String(args.plan).slice(0, 20000)}\nPLAN>>>\n`;
-  const authorFamily = args.authorFamily || 'claude';
-  const reviewModel = args.reviewModel || (authorFamily === 'claude' ? 'gpt-6.1-sol' : 'claude-opus-5.5');
+  const family = (m) => (/claude|opus|sonnet|haiku/i.test(m) ? 'claude' : /gpt|codex/i.test(m) ? 'gpt' : String(m).split(/[-.]/)[0]);
+  const devModel = args.devModel || (args.authorFamily === 'gpt' ? 'gpt-6.1-sol' : 'claude-opus-5.5');
+  const reviewModel = args.reviewModel || (family(devModel) === 'claude' ? 'gpt-6.1-sol' : 'claude-opus-5.5');
+  if (family(devModel) === family(reviewModel)) {
+    throw new Error(`reviewModel (${reviewModel}) must be a different model family from devModel (${devModel})`);
+  }
   const maxRounds = Number.isInteger(args.maxFixRounds) ? args.maxFixRounds : 2;
 
   const implSchema = {
@@ -60,8 +64,9 @@ async (ctx) => {
     + `Companion repos: ${others(r)} — keep interfaces consistent with the plan. `
     + 'Then verify: lint, run existing + new tests, and exercise the changed path locally where possible. '
     + 'Finally run `dev-harness diff` in the repo and put the printed file path in diffPath. '
+    + 'The user already approved this plan: on the branch, save it with `dev-harness handoff write` (paste the plan above via a heredoc), then run `dev-harness plan approve` and confirm it succeeded before editing. '
     + 'DO NOT commit, push or open PRs. Return JSON per the schema with exact commands and results.',
-    { label: `implement:${r.repo}`, schema: implSchema },
+    { label: `implement:${r.repo}`, schema: implSchema, model: devModel },
   )));
   impl.forEach((res, i) => {
     ctx.log(`${repos[i].repo}: ${res ? res.summary : 'IMPLEMENTATION FAILED'}`);
@@ -79,7 +84,7 @@ async (ctx) => {
         `In ${rv.repo.path} (repo ${rv.repo.repo}) address these independent review findings where you agree; for any you disagree with, leave the code and explain why. `
         + `Findings: ${JSON.stringify([...blocking(rv.code), ...blocking(rv.security)])}. `
         + 'Re-run lint/tests after fixing, then run `dev-harness diff` and return its printed path as diffPath. DO NOT commit or push. Return JSON per the schema (disputed items include the reason).',
-        { label: `fix:${rv.repo.repo}:r${round}`, schema: fixSchema },
+        { label: `fix:${rv.repo.repo}:r${round}`, schema: fixSchema, model: devModel },
       )));
       fixes.forEach((f, k) => { if (f && f.diffPath) diffs.set(toFix[k].repo.repo, f.diffPath); });
     }

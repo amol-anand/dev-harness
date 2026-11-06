@@ -56,6 +56,9 @@ test('fix loop re-reviews only failing repos and runs the contract check', async
   assert.ok(labels.includes('contract-check'));
   assert.equal(calls.find((c) => c.label === 'code-review:acme/api:r0').model, 'gpt-6.1-sol');
   assert.equal(calls.find((c) => c.label === 'code-review:acme/api:r0').agent, 'code-reviewer');
+  assert.equal(calls.find((c) => c.label === 'implement:acme/api').model, 'claude-opus-5.5');
+  assert.equal(calls.find((c) => c.label === 'fix:acme/api:r1').model, 'claude-opus-5.5');
+  assert.match(prompts.get('implement:acme/api'), /handoff write.*plan approve/);
   assert.equal(out.repos[0].codeVerdict, 'PASS');
   assert.match(prompts.get('code-review:acme/api:r1'), /\/tmp\/fixed\.diff/);
   assert.match(prompts.get('code-review:acme/ui:r0'), /\/tmp\/implement:acme\/ui\.diff/);
@@ -77,6 +80,12 @@ test('stops after maxFixRounds and reports open findings; gpt author gets claude
   assert.equal(out.repos[0].openFindings[0].severity, 'CRITICAL');
   assert.equal(out.contract, null);
   assert.equal(calls.find((c) => c.label.startsWith('security-review')).model, 'claude-opus-5.5');
+  assert.equal(calls.find((c) => c.label.startsWith('implement:')).model, 'gpt-6.1-sol');
+});
+
+test('rejects same-family dev and review models', async () => {
+  const { ctx } = mockCtx({ ...args, devModel: 'claude-opus-5.5', reviewModel: 'claude-sonnet-5.5' }, () => null);
+  await assert.rejects(run(ctx), /different model family/);
 });
 
 test('validates args', async () => {

@@ -5,7 +5,7 @@ import {
 } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig } from '../lib/config.mjs';
+import { loadConfig, HARNESS_HOME } from '../lib/config.mjs';
 import { localPaths } from '../lib/context.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -70,7 +70,7 @@ function claudeHooks(settingsPath, mode, node) {
   settings.hooks.SessionStart = stripOurs(settings.hooks.SessionStart);
   if (mode === 'add') {
     const c = (s) => `${MARKER} "${node}" "${join(ROOT, 'hooks', s)}"`;
-    settings.hooks.PreToolUse.push({ matcher: 'Bash', hooks: [{ type: 'command', command: c('guard.mjs'), timeout: 10 }] });
+    settings.hooks.PreToolUse.push({ matcher: 'Bash|Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: c('guard.mjs'), timeout: 10 }] });
     settings.hooks.SessionStart.push({ hooks: [{ type: 'command', command: c('session-start.mjs'), timeout: 15 }] });
   }
   for (const k of ['PreToolUse', 'SessionStart']) if (!settings.hooks[k].length) delete settings.hooks[k];
@@ -79,7 +79,39 @@ function claudeHooks(settingsPath, mode, node) {
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
+const MODEL_BACKUP = join(HARNESS_HOME, 'backups', 'models.json');
+
+function readJson(p) { return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : {}; }
+
+/** Set the runtime's default model, remembering the user's original value once. */
+function setModel(settingsPath, model) {
+  const settings = readJson(settingsPath);
+  const backup = readJson(MODEL_BACKUP);
+  if (!(settingsPath in backup)) {
+    backup[settingsPath] = 'model' in settings ? settings.model : null;
+    mkdirSync(dirname(MODEL_BACKUP), { recursive: true });
+    writeFileSync(MODEL_BACKUP, `${JSON.stringify(backup, null, 2)}\n`);
+  }
+  settings.model = model;
+  mkdirSync(dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+}
+
+function restoreModel(settingsPath) {
+  const backup = readJson(MODEL_BACKUP);
+  if (!(settingsPath in backup) || !existsSync(settingsPath)) return;
+  const settings = readJson(settingsPath);
+  if (backup[settingsPath] === null) delete settings.model;
+  else settings.model = backup[settingsPath];
+  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  delete backup[settingsPath];
+  writeFileSync(MODEL_BACKUP, `${JSON.stringify(backup, null, 2)}\n`);
+}
+
 switch (cmd) {
+  case 'set-model': setModel(args[0], args[1]); break;
+  case 'restore-model': restoreModel(args[0]); break;
+  case 'dev-model': { const c = loadConfig(); console.log(c.dev.setDefaults ? (args[0] === 'claude' ? c.dev.claudeModel : c.dev.model) : ''); break; }
   case 'render-agents': renderAgents(args[0], args[1]); break;
   case 'compose-instructions': composeInstructions(args[0]); break;
   case 'copilot-hooks': copilotHooks(args[0], args[1]); break;

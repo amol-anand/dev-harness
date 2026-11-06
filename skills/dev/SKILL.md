@@ -2,7 +2,7 @@
 name: dev
 description: >
   Default workflow for ANY coding task (feature, bug fix, refactor, EDS block/styling work, backend/API change) in any
-  repository. Triage → plan (auto plan-first for anything non-trivial) → branch → surgical local implementation →
+  repository. Triage → branch → plan (auto plan-first for anything non-trivial; stops for approval) → surgical local implementation →
   verify → independent fresh-context code review + security review on a different model family → bounded fix loop →
   ready-to-ship summary, then STOP until the user says "ship". Use this instead of ad-hoc coding.
 ---
@@ -27,25 +27,39 @@ If an open handoff exists for this repo/branch (`dev-harness handoff show`), rea
 ## 1. Triage
 `plan-first` if ANY: 3+ files · more than one repo · API/route/response/config/storage contract change · auth,
 permissions, tokens, user input handling · data migration · ambiguous definition of done · user asked for a plan.
-Otherwise `execute` (small, obvious, ≤2 files). When in doubt, plan.
+Otherwise `execute` — only for super-minor tweaks: ≤2 files, obvious, no contract/config files (copy, a CSS value, a
+one-line bug fix). When in doubt, plan. **The mode you're running in (interactive, autopilot, plan) never changes this.**
+The plan gate hook enforces it: edits beyond the minor-tweak limit are blocked until a plan exists AND the user approved it.
 
-## 2. Plan (plan-first only)
+## 2. Branch (before planning)
+- Never work on the default branch. Name: short, describes only the change, no usernames
+  (`dev-harness branch suggest "<what changes>"`, validate with `dev-harness branch check <name>`). Per-repo rules
+  (e.g. max length) come from config and are enforced by the guard hook.
+- Create branches yourself with git: `dev-harness branch check <name> && git switch -c <name>`. Never use the app's
+  branch tools (`rename_branch` etc.) — the guard denies them.
+- In a worktree session the app may have pre-created a branch (session start flags it when it breaks the rules):
+  create the compliant branch with `git switch -c <name>` before editing; uncommitted changes carry over.
+- If the user named an existing branch, check it out and pull first; never silently create a second branch.
+
+- Create the branch BEFORE writing the plan: the plan and its approval are recorded per branch. If you must change
+  branch after approval, rewrite the plan there and get the user's approval again.
+
+## 3. Plan (plan-first only)
 - Investigate the code first (use subagents for broad exploration). Find existing helpers/patterns to reuse.
 - Plan contents: problem, approach, files per repo, **Impact & back-compat** (every changed surface → its consumers →
   why they keep working), test strategy, risks, open questions. Prefer the simplest design that meets the DoD.
 - Ask focused questions only where a decision genuinely changes what you build (one question at a time, with options).
 - Save the plan to the handoff with `dev-harness handoff write <<'EOF' … EOF` (it doubles as the resume document; read it
   back with `dev-harness handoff show`). Always go through the CLI — the file lives outside the workspace.
-- Get approval (plan mode / exit_plan_mode in Copilot; plan mode in Claude Code). Do not write code before approval.
-
-## 3. Branch
-- Never work on the default branch. Name: short, describes only the change, no usernames
-  (`dev-harness branch suggest "<what changes>"`, validate with `dev-harness branch check <name>`). Per-repo rules
-  (e.g. max length) come from config and are enforced by the guard hook.
-- In a worktree session the tool may have pre-created a random branch: rename it now with `git branch -m <name>`.
-- If the user named an existing branch, check it out and pull first; never silently create a second branch.
+- Present the plan (summary in chat + `dev-harness handoff show`), then **STOP — in every mode, including autopilot.**
+  Discuss and revise with the user. Never treat "work autonomously", silence, or an unavailable user as approval.
+  In Copilot use `exit_plan_mode` when in plan mode; in autopilot end the turn with the plan and the question.
+- Only after the user explicitly approves (e.g. "approved", "go ahead"): run `dev-harness plan approve`, then continue.
+  If scope changes materially later, update the plan, run `dev-harness plan revoke`, and ask again.
 
 ## 4. Implement — local only
+- Write code with the configured dev model (session context "Models", default Claude Opus 5.5). If this session runs on
+  a different model, say so in one line at intake so the user can switch.
 - Surgical: touch only what the plan needs; no drive-by refactors; reuse existing helpers; no new dependencies
   unless the plan says so. Match the repo's style and test patterns (don't introduce new mocking libs or timeouts).
 - No comments that restate code. Comment only a non-obvious *why*.
@@ -67,9 +81,9 @@ path, the approved plan text (paste the output of `dev-harness handoff show`) an
 own reasoning or conversation. Run both in parallel:
 
 - **Copilot**: launch two background `task` subagents with `agent_type: "code-reviewer"` and
-  `agent_type: "security-reviewer"`. Their pinned models are from a different family than the default author model.
-  If you yourself are running on that same family, pass a `model` override from the other family
-  (Claude author → GPT reviewer; GPT/other author → Claude reviewer).
+  `agent_type: "security-reviewer"`. They are pinned to the configured review models (GPT family, e.g. gpt-6.1-sol)
+  while code is written with the dev model (Claude Opus) — see "Models" in the session context. Don't override them
+  unless you are yourself running on the review model's family, then pass a `model` from the other family.
 - **Claude Code**: if the `copilot` CLI exists, run in parallel (background) `dev-harness review --kind code --plan "$(dev-harness handoff path)"`
   and `dev-harness review --kind security --plan "$(dev-harness handoff path)"` (GPT-family, read-only, plan inlined). Otherwise use the
   `code-reviewer` / `security-reviewer` subagents.
