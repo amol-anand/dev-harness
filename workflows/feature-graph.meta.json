@@ -1,6 +1,6 @@
 {
   "name": "feature-graph",
-  "description": "Multi-repo feature graph for an APPROVED plan: parallel per-repo implement+verify (local only, no commits) → independent code + security review per repo on a different model family → bounded fix loop → cross-repo contract check → consolidated ready-to-ship data. args: { goal: string, plan: string (approved plan text, e.g. output of `dev-harness handoff show`), repos: [{ path, repo, branch, base? }], authorFamily?: 'claude'|'gpt', reviewModel?: string, maxFixRounds?: number }",
+  "description": "Multi-repo feature graph for an APPROVED plan: parallel per-repo implement+verify (local only, no commits) → independent code + security review per repo on a different model family → bounded fix loop → cross-repo contract check → consolidated ready-to-ship data. args: { goal: string, plan: string (approved plan text, e.g. output of `dev-harness handoff show`), repos: [{ path, repo, branch, base? }], authorFamily?: 'claude'|'gpt', devModel?: string (default claude-opus-5.5), reviewModel?: string (default gpt-6.1-sol), maxFixRounds?: number }",
   "phases": [
     { "title": "Implement & verify" },
     { "title": "Independent review" },
@@ -17,6 +17,7 @@
       "plan": { "type": "string" },
       "authorFamily": { "type": "string", "enum": ["claude", "gpt"] },
       "reviewModel": { "type": "string" },
+      "devModel": { "type": "string" },
       "maxFixRounds": { "type": "integer" },
       "repos": {
         "type": "array",

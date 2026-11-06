@@ -5,12 +5,22 @@
     "enforce": "writes"
   },
   "git": {
-    "protectedBranches": ["main", "master"],
+    "protectedBranches": [
+      "main",
+      "master"
+    ],
     "branch": {
       "maxLength": 40,
-      "forbidSubstrings": ["your-github-handle"],
+      "forbidSubstrings": [
+        "your-github-handle"
+      ],
       "rules": [
-        { "repos": ["some-org/repo-with-short-branches"], "maxLength": 7 }
+        {
+          "repos": [
+            "some-org/repo-with-short-branches"
+          ],
+          "maxLength": 7
+        }
       ]
     }
   },
@@ -18,6 +28,24 @@
     "enabled": true,
     "ttlMinutes": 30,
     "excludeRepos": []
+  },
+  "planGate": {
+    "enabled": true,
+    "maxUnplannedFiles": 2,
+    "contractFiles": [
+      "package.json",
+      "wrangler.toml",
+      "wrangler.json",
+      "wrangler.jsonc",
+      "fstab.yaml",
+      ".github/workflows/"
+    ],
+    "excludeRepos": []
+  },
+  "dev": {
+    "model": "claude-opus-5.5",
+    "claudeModel": "opus",
+    "setDefaults": true
   },
   "review": {
     "codeModel": "gpt-6.1-sol",
