@@ -48,7 +48,7 @@ writes, pushes to the default branch and badly named branches. If the guard deni
    - <url>
    - <url>
    ```
-   then a **Slack-ready summary** (3–6 plain bullets a teammate can read without context), then update the handoff file.
+   then a **Slack-ready summary** (3–6 plain bullets a teammate can read without context), then run `dev-harness handoff done`.
 
 ## Follow-up changes on a shipped branch
 Same flow: unlock → commit → push → lock. If the change alters scope, also refresh the PR body with `gh-me pr edit`.

@@ -26,7 +26,7 @@ The agent reads `feature-graph.meta.json` (meta) and `feature-graph.run.js` (the
 ```json
 {
   "goal": "Schedule-delete for pages and snapshots",
-  "planPath": "/path/to/handoff.md",
+  "plan": "<output of dev-harness handoff show>",
   "authorFamily": "claude",
   "repos": [
     { "path": "/path/to/scheduler", "repo": "owner/scheduler", "branch": "del-route" },

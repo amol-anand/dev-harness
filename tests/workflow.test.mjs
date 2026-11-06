@@ -26,7 +26,7 @@ function mockCtx(args, respond) {
 
 const args = {
   goal: 'Add DELETE route',
-  planPath: '/tmp/plan.md',
+  plan: '# Plan\nAdd DELETE /schedule route and UI button',
   repos: [
     { path: '/w/api', repo: 'acme/api', branch: 'del-route' },
     { path: '/w/ui', repo: 'acme/ui', branch: 'del-ui' },
@@ -60,6 +60,7 @@ test('fix loop re-reviews only failing repos and runs the contract check', async
   assert.match(prompts.get('code-review:acme/api:r1'), /\/tmp\/fixed\.diff/);
   assert.match(prompts.get('code-review:acme/ui:r0'), /\/tmp\/implement:acme\/ui\.diff/);
   assert.match(prompts.get('contract-check'), /untrusted/);
+  assert.match(prompts.get('implement:acme/api'), /Add DELETE \/schedule route/);
   assert.equal(out.repos[0].openFindings.length, 0);
   assert.equal(out.repos[1].securityVerdict, 'NO_FINDINGS');
 });

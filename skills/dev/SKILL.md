@@ -22,7 +22,7 @@ Write a 4-line brief before touching code:
 - **Constraints** (what must not change, patterns to match, out of scope)
 - **Mode**: `plan-first` or `execute` (see triage)
 
-If an open handoff exists for this repo/branch, read it first and continue from it.
+If an open handoff exists for this repo/branch (`dev-harness handoff show`), read it first and continue from it.
 
 ## 1. Triage
 `plan-first` if ANY: 3+ files · more than one repo · API/route/response/config/storage contract change · auth,
@@ -34,7 +34,8 @@ Otherwise `execute` (small, obvious, ≤2 files). When in doubt, plan.
 - Plan contents: problem, approach, files per repo, **Impact & back-compat** (every changed surface → its consumers →
   why they keep working), test strategy, risks, open questions. Prefer the simplest design that meets the DoD.
 - Ask focused questions only where a decision genuinely changes what you build (one question at a time, with options).
-- Save the plan to the handoff file: `dev-harness handoff path` (it doubles as the resume document).
+- Save the plan to the handoff with `dev-harness handoff write <<'EOF' … EOF` (it doubles as the resume document; read it
+  back with `dev-harness handoff show`). Always go through the CLI — the file lives outside the workspace.
 - Get approval (plan mode / exit_plan_mode in Copilot; plan mode in Claude Code). Do not write code before approval.
 
 ## 3. Branch
@@ -62,18 +63,19 @@ If you need the user to approve a permission or start something, say precisely w
 ## 6. Independent review (always — every change)
 Reviewers get fresh context and no shell: first run `dev-harness diff` (prints the path of a diff file covering
 committed + uncommitted + untracked changes vs the merge-base), then give each reviewer ONLY the repo path, that diff
-path, the handoff/plan path and the profile path. Never paste your reasoning or conversation. Run both in parallel:
+path, the approved plan text (paste the output of `dev-harness handoff show`) and the repo profile text. Never paste your
+own reasoning or conversation. Run both in parallel:
 
 - **Copilot**: launch two background `task` subagents with `agent_type: "code-reviewer"` and
   `agent_type: "security-reviewer"`. Their pinned models are from a different family than the default author model.
   If you yourself are running on that same family, pass a `model` override from the other family
   (Claude author → GPT reviewer; GPT/other author → Claude reviewer).
-- **Claude Code**: if the `copilot` CLI exists, run in parallel (background) `dev-harness review --kind code --plan <handoff>`
-  and `dev-harness review --kind security --plan <handoff>` (GPT-family, read-only). Otherwise use the
+- **Claude Code**: if the `copilot` CLI exists, run in parallel (background) `dev-harness review --kind code --plan "$(dev-harness handoff path)"`
+  and `dev-harness review --kind security --plan "$(dev-harness handoff path)"` (GPT-family, read-only, plan inlined). Otherwise use the
   `code-reviewer` / `security-reviewer` subagents.
 
-Prompt for each reviewer: "Review the change in <diff path> for the repository at <repo path>. Intent/plan: <handoff path>.
-Repo profile: <profile path>. Follow your output format." Re-run `dev-harness diff` before every review round.
+Prompt for each reviewer: "Review the change in <diff path> for the repository at <repo path>. Approved plan: <plan text>.
+Repo profile: <profile text>. Follow your output format." Re-run `dev-harness diff` before every review round.
 
 ## 7. Fix loop (max `review.maxFixRounds`, default 2)
 - Fix CRITICAL/HIGH, and MEDIUM where you agree. Re-verify. Re-run only the reviewer(s) that had findings.
@@ -89,7 +91,7 @@ Repo profile: <profile path>. Follow your output format." Re-run `dev-harness di
 **Back-compat:** consumers checked and why they keep working
 Say **ship** to commit, push as <account> and open the PR (or tell me what to change).
 ```
-Update the handoff file with the final state. Then wait. When the user says "ship" (or explicitly asks to
+Update the handoff (`dev-harness handoff write`) with the final state. Then wait. When the user says "ship" (or explicitly asks to
 commit/push/open a PR), use the `ship` skill.
 
 ## Learning
