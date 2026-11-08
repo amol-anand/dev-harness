@@ -47,7 +47,8 @@ The plan gate hook enforces it: edits beyond the minor-tweak limit are blocked u
 ## 3. Plan (plan-first only)
 - Investigate the code first (use subagents for broad exploration). Find existing helpers/patterns to reuse.
 - Plan contents: problem, approach, files per repo, **Impact & back-compat** (every changed surface → its consumers →
-  why they keep working), test strategy, risks, open questions. Prefer the simplest design that meets the DoD.
+  why they keep working), test strategy, evidence so far **with the input kinds it did not cover**, risks, open
+  questions. Prefer the simplest design that meets the DoD.
 - Ask focused questions only where a decision genuinely changes what you build (one question at a time, with options).
 - Save the plan to the handoff with `dev-harness handoff write <<'EOF' … EOF` (it doubles as the resume document; read it
   back with `dev-harness handoff show`). Always go through the CLI — the file lives outside the workspace.
@@ -74,10 +75,23 @@ check console errors and mobile/desktop layout; compare with the reference page 
 Record exact commands and results. If something can't be verified locally, say exactly what and why.
 If you need the user to approve a permission or start something, say precisely what and why in one line.
 
+**Logic and algorithm changes** (diffs, merges, parsers, matching, sorting, data transforms): also run a quick
+throwaway script (outside the repo) that runs the OLD and NEW code on many generated inputs and counts the cases that
+were right before and are wrong now. Generate the awkward inputs on purpose: empty, only one side empty, different
+counts or lengths on each side, changes at the first/last position. Do this for every behaviour change, including small
+"edge case" tweaks added late. Report the result with its input limits ("3,000 cases, same section count, no empty
+sections"), never as a bare "0 failures", and put any input kinds it did not cover in the plan / review prompt.
+
+**Repo conventions self-check** (before review): re-read the repo's `AGENTS.md`, `CLAUDE.md` and
+`.github/copilot-instructions.md` (repo root and any nested ones next to changed files). For each written rule that
+applies to the diff (e.g. "avoid `let`", "destructured params", "no comments that restate code"), confirm the new code
+follows it or fix it. Nearby code breaking a rule is not a reason to break it too.
+
 ## 6. Independent review (always — every change)
 Reviewers get fresh context and no shell: first run `dev-harness diff` (prints the path of a diff file covering
 committed + uncommitted + untracked changes vs the merge-base), then give each reviewer ONLY the repo path, that diff
-path, the approved plan text (paste the output of `dev-harness handoff show`) and the repo profile text. Never paste your
+path, the approved plan text (paste the output of `dev-harness handoff show`), the repo profile text, the paths of the
+repo convention files that apply, the merge-base SHA, and what your evidence did and did not cover. Never paste your
 own reasoning or conversation. Run both in parallel:
 
 - **Copilot**: launch two background `task` subagents with `agent_type: "code-reviewer"` and
@@ -89,7 +103,9 @@ own reasoning or conversation. Run both in parallel:
   `code-reviewer` / `security-reviewer` subagents.
 
 Prompt for each reviewer: "Review the change in <diff path> for the repository at <repo path>. Approved plan: <plan text>.
-Repo profile: <profile text>. Follow your output format." Re-run `dev-harness diff` before every review round.
+Repo profile: <profile text>. Repo conventions: <paths of the AGENTS.md / CLAUDE.md / copilot-instructions files that
+apply>. Base ref: <merge-base sha>. Evidence so far and what it did NOT cover: <one line each>.
+Follow your output format." Re-run `dev-harness diff` before every review round.
 
 ## 7. Fix loop (max `review.maxFixRounds`, default 2)
 - Fix CRITICAL/HIGH, and MEDIUM where you agree. Re-verify. Re-run only the reviewer(s) that had findings.
