@@ -101,6 +101,8 @@ re-explaining them:
 dev-harness profile init ~/code/my-repo     # writes ~/.dev-harness/local/profiles/<owner>__<repo>.md
 ```
 Edit the **Notes** section, e.g. local clone paths of companion repos, consumers to keep compatible, and gotchas.
+If the repo has written convention files (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, nested
+`AGENTS.md`/`CLAUDE.md`), the profile lists their paths so every session reads them; re-run with `--force` to pick up new ones.
 Profiles stay private and are never committed to this repo.
 
 ## Day-to-day use
@@ -118,7 +120,8 @@ Just ask for work as usual. The `dev` skill picks it up. Useful phrases:
 | A correction ("don't do X") | Recorded as a lesson for this repo (or globally) |
 
 Manual controls: `dev-harness status`, `dev-harness plan status|approve|revoke`, `dev-harness unlock` / `lock`, `dev-harness branch suggest "fix the nav overflow"`,
-`dev-harness review --kind security` (cross-family review from any terminal).
+`dev-harness review --kind security` (cross-family review from any terminal; the reviewer is told to read the repo's
+convention files, including nested ones next to changed files).
 
 ### Multi-repo features (Copilot)
 For approved plans spanning several repos, ask the agent to run the **feature-graph** workflow. See

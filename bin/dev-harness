@@ -21,6 +21,7 @@ import { resolveToken, findGh } from '../lib/identity.mjs';
 import {
   collectDiff, agentBody, buildReviewPrompt, runCopilotReview, writeTemp,
 } from '../lib/review.mjs';
+import { conventionFiles } from '../lib/conventions.mjs';
 import { audit, loadDenylist } from '../lib/audit.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -207,7 +208,9 @@ function review() {
   const kind = opt('kind', 'code');
   if (!['code', 'security'].includes(kind)) throw new Error('--kind must be code or security');
   const model = opt('model', kind === 'code' ? cfg.review.codeModel : cfg.review.securityModel);
-  const { diff, base } = collectDiff(cwd, opt('base'));
+  const {
+    diff, base, root, files,
+  } = collectDiff(cwd, opt('base'));
   if (!diff.trim()) { console.log('No changes to review.'); return; }
   const diffPath = writeTemp('change.diff', diff);
   const i = info();
@@ -218,8 +221,11 @@ function review() {
     planPath: opt('plan') ? resolve(opt('plan')) : '',
     profile: profileFile && existsSync(profileFile) ? readFileSync(profileFile, 'utf8') : '',
     base,
+    conventions: conventionFiles({ root, changed: files }).map((p) => join(root, p)),
   });
-  const res = runCopilotReview({ dir: cwd, prompt, model, diffPath });
+  const res = runCopilotReview({
+    dir: root, prompt, model, diffPath,
+  });
   if (res.error) throw new Error(`copilot CLI failed: ${res.error.message}`);
   process.stdout.write(res.stdout || '');
   if (res.status) { process.stderr.write(res.stderr || ''); process.exitCode = res.status; }
