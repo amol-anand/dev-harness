@@ -50,6 +50,8 @@ The plan gate hook enforces it: edits beyond the minor-tweak limit are blocked u
   why they keep working), test strategy, evidence so far **with the input kinds it did not cover**, risks, open
   questions. Prefer the simplest design that meets the DoD.
 - Ask focused questions only where a decision genuinely changes what you build (one question at a time, with options).
+  If the goal or design is still open (several real choices, unclear DoD) and the `workshop` skill is installed, offer
+  it to settle the decisions one at a time first; its plan then goes through the approval below like any other.
 - Save the plan to the handoff with `dev-harness handoff write <<'EOF' … EOF` (it doubles as the resume document; read it
   back with `dev-harness handoff show`). Always go through the CLI — the file lives outside the workspace.
 - Show the plan in the side panel (Copilot app): the editor canvas can't open the handoff file, so also write the same
@@ -76,6 +78,8 @@ The plan gate hook enforces it: edits beyond the minor-tweak limit are blocked u
 Run the profile's verify recipe. At minimum: lint, existing tests + tests for new behaviour, and an actual run of the
 changed path (local server, curl the route, load the page). For EDS: start the dev server, load the changed pages,
 check console errors and mobile/desktop layout; compare with the reference page when replicating a design.
+If the `playwright-cli` skill is installed, use it for these page checks (snapshots/screenshots at mobile and desktop
+widths, console errors); otherwise use the browser canvas (Copilot app) or whatever browser tooling is available.
 Record exact commands and results. If something can't be verified locally, say exactly what and why.
 If you need the user to approve a permission or start something, say precisely what and why in one line.
 
@@ -140,6 +144,8 @@ Follow your output format." Re-run `dev-harness diff` before every review round.
 - Tell the user one line per round: round number, model, code/security result, streaks.
 
 ## 8. Ready-to-ship summary — then STOP
+For EDS / DA repos, if the `docs-drift-check` skill is installed, run it on the diff first and list any aem.live or
+docs.da.live pages that need updating under **Docs** (or "none").
 ```
 ## Ready to ship — <owner/repo> @ <branch>
 **What & why:** 3–6 bullets
@@ -147,6 +153,7 @@ Follow your output format." Re-run `dev-harness diff` before every review round.
 **Review:** <N> rounds (models used) · code <verdict> · security <verdict> · fixed: … · open/disputed: …
 **Remaining issues:** any still open or disputed, by severity, or "none"
 **Back-compat:** consumers checked and why they keep working
+**Docs:** pages to update, or "none" (EDS / DA repos with docs-drift-check)
 Say **ship** to commit, push as <account> and open the PR (or tell me what to change).
 ```
 Update the handoff (`dev-harness handoff write`) with the final state. Then wait. When the user says "ship" (or explicitly asks to

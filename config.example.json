@@ -55,5 +55,15 @@
     "maxRounds": 10,
     "cleanRoundsToStop": 2
   },
+  "skills": {
+    "extra": [
+      "~/code/team-skills/skills/avoid-ai-writing",
+      "~/code/team-skills/skills/pull-request",
+      "~/code/team-skills/skills/visual-explainer",
+      "~/code/team-skills/skills/docs-drift-check",
+      "~/code/team-skills/skills/workshop",
+      "~/code/team-skills/skills/playwright-cli"
+    ]
+  },
   "localDir": "~/.dev-harness/local"
 }
