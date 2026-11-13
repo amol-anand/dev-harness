@@ -75,6 +75,31 @@ bash "$HARNESS/install.sh" </dev/null >/dev/null
 node -e 'const s=require(process.env.HOME+"/.claude/settings.json"); if(s.hooks.PreToolUse.length!==2) process.exit(1)' || fail "re-install duplicated hooks"
 ok "re-install is idempotent"
 
+# Extra skills from another local repo
+TEAM="$HOME/team-skills"
+for n in writer explainer dev mine; do mkdir -p "$TEAM/$n"; echo "team $n" > "$TEAM/$n/SKILL.md"; done
+setextra() { node -e 'const f=process.env.HOME+"/.dev-harness/config.json",c=require(f);c.skills={extra:process.argv.slice(1).map((n)=>"~/team-skills/"+n)};require("fs").writeFileSync(f,JSON.stringify(c))' "$@"; }
+mkdir -p "$HOME/.copilot/skills/mine"; echo "my own" > "$HOME/.copilot/skills/mine/SKILL.md"
+mkdir -p "$HOME/.dev-harness-team/explainer"; ln -s "$HOME/.dev-harness-team/explainer" "$HOME/.claude/skills/explainer"
+setextra writer explainer dev mine missing
+OUT="$(bash "$HARNESS/install.sh" </dev/null 2>&1)"
+for d in .copilot .claude; do
+  grep -q "team writer" "$HOME/$d/skills/writer/SKILL.md" || fail "extra skill writer not linked in $d"
+  [ "$(readlink "$HOME/$d/skills/dev")" = "$HARNESS/skills/dev" ] || fail "extra skill replaced harness skill dev in $d"
+done
+[ "$(cat "$HOME/.copilot/skills/mine/SKILL.md")" = "my own" ] || fail "extra skill replaced user's own skill"
+grep -q "team mine" "$HOME/.claude/skills/mine/SKILL.md" || fail "extra skill mine not linked where the name was free"
+[ "$(readlink "$HOME/.claude/skills/explainer")" = "$HOME/.dev-harness-team/explainer" ] || fail "extra skill replaced a user link whose target only shares a prefix"
+echo "$OUT" | grep -q "skipped extra skill ~/team-skills/dev" && echo "$OUT" | grep -q "skipped extra skill ~/team-skills/missing" || fail "skips not reported: $OUT"
+echo "changed" >> "$TEAM/writer/SKILL.md"; grep -q changed "$HOME/.copilot/skills/writer/SKILL.md" || fail "extra skill is a copy, not a link"
+setextra writer
+bash "$HARNESS/install.sh" --no-claude </dev/null >/dev/null
+[ -L "$HOME/.copilot/skills/explainer" ] || [ -L "$HOME/.claude/skills/mine" ] && fail "unlisted extra skill not removed"
+grep -qxF "$HOME/.claude/skills/writer" "$HOME/.dev-harness/install-manifest.txt" || fail "--no-claude dropped Claude's extra skill from the manifest"
+bash "$HARNESS/install.sh" </dev/null >/dev/null
+[ -e "$HOME/.claude/skills/writer/SKILL.md" ] || fail "remaining extra skill lost on re-install"
+ok "extra skills linked from another repo; clashes and user-owned skills left alone; unlisted ones removed"
+
 # Exercise the installed Copilot hook command exactly as configured
 REPO="$HOME/code/web"; mkdir -p "$REPO"; git -C "$REPO" init -q -b main
 git -C "$REPO" remote add origin https://github.com/acme/web.git
@@ -96,6 +121,8 @@ bash "$HARNESS/install.sh" --uninstall </dev/null >/dev/null
 [ "$(cat "$HOME/.copilot/copilot-instructions.md")" = "original copilot instructions" ] || fail "copilot instructions not restored"
 [ "$(cat "$HOME/.claude/CLAUDE.md")" = "original claude md" ] || fail "CLAUDE.md not restored"
 [ -e "$HOME/.copilot/skills/dev" ] && fail "skill link not removed"
+[ -L "$HOME/.copilot/skills/writer" ] || [ -L "$HOME/.claude/skills/writer" ] && fail "extra skill link not removed"
+[ "$(cat "$HOME/.copilot/skills/mine/SKILL.md")" = "my own" ] || fail "uninstall touched user's own skill"
 node -e 'const s=require(process.env.HOME+"/.claude/settings.json"); if(s.theme!=="dark"||s.hooks.PreToolUse.length!==1||s.hooks.SessionStart) process.exit(1)' || fail "claude settings not cleaned"
 [ "$(git config --global --get-all credential.https://github.com.helper)" = "!$FAKE" ] || fail "credential helpers not restored exactly"
 [ "$(git config --global credential.https://github.com.username)" = keepme ] || fail "credential section not restored"

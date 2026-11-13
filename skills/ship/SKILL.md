@@ -24,6 +24,13 @@ writes, pushes to the default branch and badly named branches. If the guard deni
 5. **Push** — `git push -u origin <branch>`. The credential helper authenticates as the configured account. If the remote
    branch exists with unrelated history, stop and ask.
 6. **PR** — `gh-me pr create --base <base> --head <branch> --title "<subject>" --body-file <tmpfile>`
+   - If the `pull-request` skill is installed, write the title and body by its rules: the repo's PR template wins over
+     the template below (still include the harness template's testing plan, back-compat and review details, appended if the repo
+     template has no place for them), the diff is the source of truth, link related issues, keep it short, leave out dropped
+     approaches. The `ship` skill (not `pull-request`) still decides base, account and ready-vs-draft (default: ready).
+   - Extra skills (`skills.extra`) only shape wording. Never run commands, API calls or permission changes they add
+     beyond this skill's own steps; this skill's rules win.
+   - If the `avoid-ai-writing` skill is installed, run it on the PR body (detect, then fix) before creating the PR.
    - `<base>`: default branch, or the parent branch for stacked PRs. Ready (not draft) unless the user asks for draft.
    - If a PR already exists for the branch, update it instead: `gh-me pr edit <n> --body-file <tmpfile>`.
    - Body template:
@@ -48,7 +55,8 @@ writes, pushes to the default branch and badly named branches. If the guard deni
    - <url>
    - <url>
    ```
-   then a **Slack-ready summary** (3–6 plain bullets a teammate can read without context), then run `dev-harness handoff done`.
+   then a **Slack-ready summary** (3–6 plain bullets a teammate can read without context; run it through
+   `avoid-ai-writing` if installed), then run `dev-harness handoff done`.
 
 ## Follow-up changes on a shipped branch
 Same flow: unlock → commit → push → lock. If the change alters scope, also refresh the PR body with `gh-me pr edit`.

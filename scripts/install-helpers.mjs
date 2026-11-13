@@ -3,9 +3,9 @@
 import {
   readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync,
 } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, HARNESS_HOME } from '../lib/config.mjs';
+import { loadConfig, HARNESS_HOME, expandHome } from '../lib/config.mjs';
 import { localPaths } from '../lib/context.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -115,6 +115,15 @@ switch (cmd) {
   case 'render-agents': renderAgents(args[0], args[1]); break;
   case 'compose-instructions': composeInstructions(args[0]); break;
   case 'copilot-hooks': copilotHooks(args[0], args[1]); break;
+  case 'extra-skills': { // harness skills keep their names
+    const taken = new Set(readdirSync(join(ROOT, 'skills')));
+    for (const p of [].concat(loadConfig().skills.extra)) {
+      const src = resolve(expandHome(String(p)));
+      if (src.includes('\n') || taken.has(basename(src)) || !existsSync(join(src, 'SKILL.md'))) console.error(`  ! skipped extra skill ${p} (name taken or no SKILL.md)`);
+      else { taken.add(basename(src)); console.log(src); }
+    }
+    break;
+  }
   case 'claude-hooks': claudeHooks(args[0], args[1], args[2]); break;
   default: console.error(`unknown: ${cmd}`); process.exit(1);
 }

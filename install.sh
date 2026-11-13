@@ -128,12 +128,29 @@ if [ "$DRY" = 0 ]; then
   $HELP render-agents "$GEN/copilot-agents" copilot >/dev/null
   $HELP render-agents "$GEN/claude-agents" claude >/dev/null
   $HELP compose-instructions "$GEN/instructions.md"
+  rm -rf "$GEN/extra-skills"; mkdir -p "$GEN/extra-skills"
+  $HELP extra-skills | while IFS= read -r src; do ln -sn "$src" "$GEN/extra-skills/$(basename "$src")"; done
 fi
+# Skills from other repos (skills.extra): linked live through $GEN so a git pull there updates them. Only a free
+# name or our own earlier link is taken, and links whose skill left the list are dropped.
+link_extra() {
+  local s l
+  for s in "$GEN"/extra-skills/*; do
+    [ -L "$s" ] || continue
+    l="$1/$(basename "$s")"
+    if { [ -e "$l" ] || [ -L "$l" ]; } && [ "$(readlink "$l")" != "$s" ]; then say "  ! skipped $l (already exists)"; else link "$s" "$l"; fi
+  done
+}
+prune_extra() {
+  local l
+  for l in "$1"/*; do case "$(readlink "$l" 2>/dev/null)" in "$GEN/extra-skills/"*) if [ -e "$l" ]; then record "$l"; else run rm "$l"; fi ;; esac; done
+}
 
 # ---------- GitHub Copilot ----------
 if [ "$DO_COPILOT" = 1 ]; then
   say "• GitHub Copilot → $COPILOT_DIR"
   for s in "$HARNESS"/skills/*/; do link "${s%/}" "$COPILOT_DIR/skills/$(basename "$s")" --if-free; done
+  link_extra "$COPILOT_DIR/skills"
   for a in "$HARNESS"/agents/*.agent.md; do n="$(basename "$a")"; link "$GEN/copilot-agents/$n" "$COPILOT_DIR/agents/$n" --if-free; done
   if [ "$DRY" = 0 ]; then mkdir -p "$COPILOT_DIR/hooks"; $HELP copilot-hooks "$COPILOT_DIR/hooks/dev-harness.json" "$NODE"; record "$COPILOT_DIR/hooks/dev-harness.json"; fi
   say "  hooks → $COPILOT_DIR/hooks/dev-harness.json"
@@ -146,6 +163,7 @@ fi
 if [ "$DO_CLAUDE" = 1 ] && { [ -d "$CLAUDE_DIR" ] || command -v claude >/dev/null; }; then
   say "• Claude Code → $CLAUDE_DIR"
   for s in "$HARNESS"/skills/*/; do link "${s%/}" "$CLAUDE_DIR/skills/$(basename "$s")" --if-free; done
+  link_extra "$CLAUDE_DIR/skills"
   for a in "$HARNESS"/agents/*.agent.md; do n="$(basename "$a" .agent.md).md"; link "$GEN/claude-agents/$n" "$CLAUDE_DIR/agents/$n" --if-free; done
   if [ "$DRY" = 0 ]; then
     [ -f "$CLAUDE_DIR/settings.json" ] && [ ! -f "$DH_HOME/backups/claude-settings.original.json" ] && mkdir -p "$DH_HOME/backups" && cp "$CLAUDE_DIR/settings.json" "$DH_HOME/backups/claude-settings.original.json"
@@ -159,12 +177,14 @@ elif [ "$DO_CLAUDE" = 1 ]; then
   say "• Claude Code not detected — skipped"
 fi
 
+prune_extra "$COPILOT_DIR/skills"; prune_extra "$CLAUDE_DIR/skills"
+
 # ---------- identity ----------
 if [ "$DO_CRED" = 1 ] && [ "$DRY" = 0 ] && [ -n "$("$NODE" -p "require('$DH_HOME/config.json').github?.account || ''" 2>/dev/null)" ]; then
   say "• git credential helper"
   "$NODE" "$HARNESS/bin/dev-harness" doctor --fix >/dev/null 2>&1 || true
 fi
 
-if [ "$DRY" = 0 ]; then mv "$MANIFEST.new" "$MANIFEST"; fi
+if [ "$DRY" = 0 ]; then sort -u "$MANIFEST.new" > "$MANIFEST"; rm "$MANIFEST.new"; fi
 say ""
 say "Done. Run \`dev-harness doctor\` to verify, then restart Copilot / Claude Code so hooks load."

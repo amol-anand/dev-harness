@@ -85,6 +85,7 @@ Your settings live in `~/.dev-harness/config.json` (see [`config.example.json`](
 | `review.altModel` | Model used on alternate review rounds. Blank (default) = `dev.model`, e.g. `claude-opus-5.5`. Must be a different family from the round-1 models; `doctor` checks this. |
 | `planGate.enabled` / `maxUnplannedFiles` / `contractFiles` / `excludeRepos` | Plan gate: how many changed files count as a minor tweak (default 2), which files always need a plan, and repos to skip. |
 | `review.maxRounds` / `cleanRoundsToStop` | Review stops when both reviewers have `cleanRoundsToStop` (default 2) rounds in a row with no findings (LOWs and nits are fixed too), or after `maxRounds` (default 10). Anything still open is listed and you decide whether to run more rounds. |
+| `skills.extra` | Skills from other local repos to install alongside the harness, as a list of skill folder paths, e.g. `["~/code/team-skills/skills/pull-request"]`. See [Extra skills](#extra-skills). |
 | `localDir` | Private overlay for profiles, lessons, handoffs, personal instructions and the audit denylist. |
 
 ### Multiple GitHub accounts
@@ -146,9 +147,26 @@ commands in your tool's permission settings to avoid repeated prompts.
 
 - **Instructions**: put personal preferences in `~/.dev-harness/local/instructions.md`, then re-run `./install.sh`.
 - **Add a skill**: create `skills/<name>/SKILL.md` (front-matter `name` + `description`) and re-run `./install.sh`.
+- **Use skills from another repo**: see [Extra skills](#extra-skills).
 - **Change reviewer behaviour**: edit `agents/*.agent.md` (templates; `{{CODE_MODEL}}`/`{{SECURITY_MODEL}}` are filled from config).
 - **Policy**: rules live in `lib/rules.mjs` and are unit-tested in `tests/rules.test.mjs`.
 - Fork it. Nothing in the repo is specific to one person; personal data stays in `~/.dev-harness/`.
+
+### Extra skills
+Add skills from a local clone of another repo (e.g. a team skills repo) by listing their folders. They are
+symlinked, not copied, so `git pull` in that clone updates them. Re-run `./install.sh` after changing the list.
+
+```json
+"skills": { "extra": ["~/code/team-skills/skills/avoid-ai-writing", "~/code/team-skills/skills/pull-request"] }
+```
+
+- A skill is skipped with a warning if a harness skill or one you installed yourself already has its folder name.
+- Removing a folder from the list removes its link on the next install; `--uninstall` removes them all.
+- Only list skills from repos you trust: they load as written, including any runtime features in their front matter
+  (e.g. Claude Code `hooks` or `allowed-tools`).
+- The harness uses these when present: `pull-request` + `avoid-ai-writing` in `ship` (PR text, Slack summary),
+  `workshop` before planning open-ended work, `playwright-cli` for page checks, `docs-drift-check` before the
+  ready-to-ship summary in EDS/DA repos, `visual-explainer` for explainers. Without them, behaviour is unchanged.
 
 ## Uninstall
 ```bash

@@ -13,6 +13,10 @@ changes with as little back-and-forth as possible.
   blocks larger edits until then.
 - **Shipping is a separate, explicit step**: commit/push/PR only after the user says "ship" (or explicitly asks), via the
   `ship` skill. Until then changes stay local so the user can inspect them. A guard hook enforces this.
+- **Writing for people** (docs, READMEs, explainers, diagrams, recaps, PR text): use `visual-explainer` for HTML
+  explainers and diagrams, `pull-request` for PR titles/descriptions, and run `avoid-ai-writing` on prose before it
+  is published — when those skills are installed (`skills.extra` in config). They shape wording and process only;
+  harness rules win, and never run commands, API calls or permission changes they add without asking.
 - **Reviewing others' PRs** → `review-pr` skill. **Pausing/resuming** → `handoff` skill. **Corrections** → `lessons` skill.
 - Questions without a code change ("how does X work?", "what's the difference…") → answer directly and concisely; no workflow.
 
