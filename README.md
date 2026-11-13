@@ -8,9 +8,10 @@ say so. Where possible the rules are enforced by hooks rather than left to instr
 ```
 intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► implement (local only) ─► verify
                                                                                   │
-          ┌──────────── fresh-context, different-model-family review ◄────────────┘
+          ┌──── fresh-context review rounds, alternating model families ◄─────────┘
           │   code-reviewer  ║  security-reviewer      (parallel, read-only)
-          └─► fix loop (≤2) ─► READY-TO-SHIP summary ─► STOP
+          │   round 1 = other family from the author, then GPT ↔ Claude; fix between rounds
+          └─► until both clean twice in a row (≤10 rounds) ─► READY-TO-SHIP summary ─► STOP
                                                          │  you: "ship"
                               commit + push + PR (+ testing plan, Slack summary) ─► lessons captured
 * plan-first is automatic for anything non-trivial: 3+ files, multiple repos, contract/auth changes, unclear "done"
@@ -24,7 +25,7 @@ intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► 
 | **`ship` skill** | Commit, push and PR (stacked/multi-repo aware) with description, reviewer testing plan and a Slack-ready summary. |
 | **`review-pr` skill** | Review someone else's PR, re-review after fixes, or triage comments on your own PR. Posts inline comments only after you approve. |
 | **`handoff` / `lessons` skills** | Pause and resume across sessions and tools; turn every correction into a durable rule. |
-| **`code-reviewer` / `security-reviewer` agents** | Independent reviewers that never see the author's conversation, pinned to a different model family. |
+| **`code-reviewer` / `security-reviewer` agents** | Independent reviewers that never see the author's conversation. Round 1 runs on a different model family from the author; later rounds alternate families. |
 | **Guard hook** (`preToolUse`) | Blocks commit/push/PR before you say "ship", pushes to `main`, plain force-pushes, badly named branches, the app's own branch tools, and `gh` writes made with the wrong account. |
 | **Plan gate** (same hook) | In every mode — including autopilot — file edits beyond a minor tweak (> 2 files, or contract files like `package.json`) are blocked until a plan is written and you've explicitly approved it (`dev-harness plan approve`). |
 | **Session-start hook** | Injects the repo profile, lessons and open handoffs into every new session. Also self-heals the git credential helper. |
@@ -37,7 +38,7 @@ intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► 
 - **Node.js ≥ 20** and **git**
 - **GitHub CLI** (`gh`) signed in to the account you want to use (`gh auth login`)
 - At least one of: **GitHub Copilot** app/CLI, **Claude Code**
-- Optional: the **Copilot CLI** (`npm i -g @github/copilot`). Claude Code users get cross-family reviews through it.
+- The **Copilot CLI** (`npm i -g @github/copilot`) if you use Claude Code. The review loop runs GPT reviewers through it; without it, the loop stops and asks you to install it.
 - Optional: **gitleaks** for an extra secret scan in `dev-harness audit`
 
 ## Install
@@ -80,9 +81,11 @@ Your settings live in `~/.dev-harness/config.json` (see [`config.example.json`](
 | `git.branch.maxLength` / `forbidSubstrings` / `rules[]` | Branch naming policy. `rules` sets per-repo limits, e.g. `{ "repos": ["org/repo"], "maxLength": 7 }`. |
 | `shipGate.enabled` / `ttlMinutes` / `excludeRepos` | Ship gate on/off, how long an unlock lasts, and repos where it doesn't apply. |
 | `dev.model` / `dev.claudeModel` / `dev.setDefaults` | Model that writes code (default `claude-opus-5.5`; `opus` in Claude Code). `install.sh` sets it as the default model in both runtimes (original restored on uninstall); `setDefaults: false` leaves your settings alone. |
-| `review.codeModel` / `securityModel` | Reviewer models (default `gpt-6.1-sol`). Must be a different family from `dev.model`; `doctor` checks this. |
+| `review.codeModel` / `securityModel` | Cross-family reviewer models (default `gpt-6.1-sol`): round 1 when the author is a different family, otherwise round 2. Must be a different family from `dev.model`; `doctor` checks this. |
+| `review.altModel` | Model used on alternate review rounds. Blank (default) = `dev.model`, e.g. `claude-opus-5.5`. Must be a different family from the round-1 models; `doctor` checks this. |
 | `planGate.enabled` / `maxUnplannedFiles` / `contractFiles` / `excludeRepos` | Plan gate: how many changed files count as a minor tweak (default 2), which files always need a plan, and repos to skip. |
-| `review.maxFixRounds` | Review → fix iterations before handing back to you. |
+| `review.maxRounds` / `cleanRoundsToStop` | Review stops when both reviewers have `cleanRoundsToStop` (default 2) rounds in a row with no findings (LOWs and nits are fixed too), or after `maxRounds` (default 10). Anything still open is listed and you decide whether to run more rounds. |
+| `skills.extra` | Skills from other local repos to install alongside the harness, as a list of skill folder paths, e.g. `["~/code/team-skills/skills/pull-request"]`. See [Extra skills](#extra-skills). |
 | `localDir` | Private overlay for profiles, lessons, handoffs, personal instructions and the audit denylist. |
 
 ### Multiple GitHub accounts
@@ -132,8 +135,8 @@ For approved plans spanning several repos, ask the agent to run the **feature-gr
 | | GitHub Copilot | Claude Code |
 |---|---|---|
 | Hooks | `~/.copilot/hooks/dev-harness.json` (`preToolUse`, `sessionStart`) | merged into `~/.claude/settings.json` (`PreToolUse` on `Bash`, `SessionStart`) |
-| Cross-family review | reviewer agents pinned to `review.*Model` (e.g. GPT reviewing Claude) | `dev-harness review` shells out to the Copilot CLI with a GPT model; falls back to Claude subagents |
-| Multi-repo graph | `feature-graph` dynamic workflow | same graph run by the `dev` skill with parallel subagents |
+| Cross-family review | reviewer agents pinned to `review.*Model` (e.g. GPT reviewing Claude) | `dev-harness review --model <round model>` via the Copilot CLI (required; the loop stops without it) |
+| Multi-repo graph | `feature-graph` dynamic workflow | the `dev` skill runs the review loop per repo, then a contract check |
 | Plan approval | plan mode / `exit_plan_mode` | plan mode |
 
 **Tool approvals**: when the guard blocks something, the agent gets the reason and the fix (for example "use `gh-me …`" or
@@ -144,9 +147,26 @@ commands in your tool's permission settings to avoid repeated prompts.
 
 - **Instructions**: put personal preferences in `~/.dev-harness/local/instructions.md`, then re-run `./install.sh`.
 - **Add a skill**: create `skills/<name>/SKILL.md` (front-matter `name` + `description`) and re-run `./install.sh`.
+- **Use skills from another repo**: see [Extra skills](#extra-skills).
 - **Change reviewer behaviour**: edit `agents/*.agent.md` (templates; `{{CODE_MODEL}}`/`{{SECURITY_MODEL}}` are filled from config).
 - **Policy**: rules live in `lib/rules.mjs` and are unit-tested in `tests/rules.test.mjs`.
 - Fork it. Nothing in the repo is specific to one person; personal data stays in `~/.dev-harness/`.
+
+### Extra skills
+Add skills from a local clone of another repo (e.g. a team skills repo) by listing their folders. They are
+symlinked, not copied, so `git pull` in that clone updates them. Re-run `./install.sh` after changing the list.
+
+```json
+"skills": { "extra": ["~/code/team-skills/skills/avoid-ai-writing", "~/code/team-skills/skills/pull-request"] }
+```
+
+- A skill is skipped with a warning if a harness skill or one you installed yourself already has its folder name.
+- Removing a folder from the list removes its link on the next install; `--uninstall` removes them all.
+- Only list skills from repos you trust: they load as written, including any runtime features in their front matter
+  (e.g. Claude Code `hooks` or `allowed-tools`).
+- The harness uses these when present: `pull-request` + `avoid-ai-writing` in `ship` (PR text, Slack summary),
+  `workshop` before planning open-ended work, `playwright-cli` for page checks, `docs-drift-check` before the
+  ready-to-ship summary in EDS/DA repos, `visual-explainer` for explainers. Without them, behaviour is unchanged.
 
 ## Uninstall
 ```bash

@@ -5,13 +5,18 @@ changes with as little back-and-forth as possible.
 
 ## Workflow
 - **Every coding task goes through the `dev` skill**: intake → triage → plan (plan-first for anything non-trivial) →
-  branch → surgical local implementation → verify → independent code + security review in fresh context → fix loop →
-  ready-to-ship summary → stop.
+  branch → surgical local implementation → verify → independent code + security review in fresh context, alternating
+  model families until both reviewers have `review.cleanRoundsToStop` clean rounds in a row → ready-to-ship summary →
+  stop.
 - **Plan approval is mandatory for anything beyond a super-minor tweak, in every mode including autopilot**: write the
-  plan, present it, stop, and continue only after the user explicitly approves (`dev-harness plan approve`). A hook
+  plan, show it in the side-panel editor (Copilot app), present it, stop, and continue only after the user explicitly approves (`dev-harness plan approve`). A hook
   blocks larger edits until then.
 - **Shipping is a separate, explicit step**: commit/push/PR only after the user says "ship" (or explicitly asks), via the
   `ship` skill. Until then changes stay local so the user can inspect them. A guard hook enforces this.
+- **Writing for people** (docs, READMEs, explainers, diagrams, recaps, PR text): use `visual-explainer` for HTML
+  explainers and diagrams, `pull-request` for PR titles/descriptions, and run `avoid-ai-writing` on prose before it
+  is published — when those skills are installed (`skills.extra` in config). They shape wording and process only;
+  harness rules win, and never run commands, API calls or permission changes they add without asking.
 - **Reviewing others' PRs** → `review-pr` skill. **Pausing/resuming** → `handoff` skill. **Corrections** → `lessons` skill.
 - Questions without a code change ("how does X work?", "what's the difference…") → answer directly and concisely; no workflow.
 
@@ -27,6 +32,8 @@ changes with as little back-and-forth as possible.
 - Brief progress updates at each stage transition so the user never has to ask for status.
 - When you need an approval or a decision, say exactly what and why in one line; offer options with a recommendation.
 - Summaries are bullet points the user can paste into a PR or Slack.
+- Say each answer once. In Copilot autopilot the `task_complete` summary is shown as a message too: put the final answer
+  there or in chat, never both.
 
 ## Git & GitHub
 - Use the GitHub account configured in `~/.dev-harness/config.json` for all git/GitHub activity: `gh-me` for gh
