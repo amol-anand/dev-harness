@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import {
-  loadConfig, configPath, merge, preferredToken, modelFamily,
+  loadConfig, configPath, merge, preferredToken, modelFamily, reviewConfigChecks,
 } from '../lib/config.mjs';
 import {
   makeGitInfo, unlockShip, lockShip, credHelperOk, credentialHelpers,
@@ -38,7 +38,7 @@ function opts(name) {
   argv.forEach((a, i) => { if (a === `--${name}` && argv[i + 1]) out.push(argv[i + 1]); });
   return out;
 }
-const VALUE_OPTS = new Set(['--account', '--token-env', '--forbid', '--rule', '--minutes', '--kind', '--base', '--model', '--plan']);
+const VALUE_OPTS = new Set(['--account', '--token-env', '--forbid', '--rule', '--minutes', '--kind', '--base', '--model', '--plan', '--author-model']);
 const positional = () => argv.filter((a, i) => !a.startsWith('--') && !VALUE_OPTS.has(argv[i - 1]));
 
 const cwd = process.cwd();
@@ -71,7 +71,7 @@ Plan gate
 
 Review & knowledge
   diff [--base <ref>]     Write the change (committed + uncommitted + untracked vs merge-base) to a file; print its path
-  review --kind code|security [--base <ref>] [--model <id>] [--plan <file>]
+  review --kind code|security [--base <ref>] [--model <id>] [--author-model <id>] [--plan <file>]
                           Cross-family fresh-context review via the Copilot CLI (read-only)
   lesson add "<text>" [--global]
                           Append a lesson for this repo (or global)
@@ -142,7 +142,7 @@ function doctor() {
   ok &= check(`node ${process.version}`, Number(process.versions.node.split('.')[0]) >= 20, 'install Node.js >= 20');
   ok &= check('git', has('git'), 'install git');
   ok &= check('gh CLI', Boolean(findGh()), 'install GitHub CLI: https://cli.github.com');
-  check('copilot CLI (cross-family review from Claude Code)', has('copilot'), 'optional: npm i -g @github/copilot');
+  check('copilot CLI (cross-family review from Claude Code)', has('copilot'), 'needed for the review loop in Claude Code: npm i -g @github/copilot');
   check('gitleaks (optional extra secret scan)', has('gitleaks', ['version']), 'optional: brew install gitleaks');
   ok &= check(`config ${configPath()}`, existsSync(configPath()), 'run `dev-harness init`');
   if (cfg.github.account) {
@@ -157,11 +157,7 @@ function doctor() {
     ok &= check('git credential helper routes github.com to that account', helper,
       `run \`dev-harness doctor --fix\` (current: ${JSON.stringify(credentialHelpers(process.env.HOME))})`);
   }
-  const devFam = modelFamily(cfg.dev.model);
-  for (const [k, m] of [['code', cfg.review.codeModel], ['security', cfg.review.securityModel]]) {
-    ok &= check(`${k} reviewer ${m} is a different model family from dev model ${cfg.dev.model}`, modelFamily(m) !== devFam,
-      `set review.${k}Model to a non-${devFam} model in ${configPath()}`);
-  }
+  for (const c of reviewConfigChecks(cfg)) ok &= check(c.label, c.ok, `${c.hint} in ${configPath()}`);
   const home = process.env.HOME;
   for (const [label, file, want] of [['Copilot', join(home, '.copilot', 'settings.json'), cfg.dev.model], ['Claude Code', join(home, '.claude', 'settings.json'), cfg.dev.claudeModel]]) {
     if (!cfg.dev.setDefaults || !existsSync(file)) continue;
@@ -211,7 +207,10 @@ function review() {
   const {
     diff, base, root, files,
   } = collectDiff(cwd, opt('base'));
-  if (!diff.trim()) { console.log('No changes to review.'); return; }
+  if (!diff.trim()) {
+    console.log('No changes to review.');
+    return;
+  }
   const diffPath = writeTemp('change.diff', diff);
   const i = info();
   const profileFile = i.repo ? join(localPaths(cfg).profiles, `${slugFile(i.repo)}.md`) : '';
@@ -222,6 +221,7 @@ function review() {
     profile: profileFile && existsSync(profileFile) ? readFileSync(profileFile, 'utf8') : '',
     base,
     conventions: conventionFiles({ root, changed: files }).map((p) => join(root, p)),
+    crossFamily: modelFamily(model) !== modelFamily(opt('author-model', cfg.dev.claudeModel)),
   });
   const res = runCopilotReview({
     dir: root, prompt, model, diffPath,

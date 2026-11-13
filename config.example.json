@@ -50,8 +50,10 @@
   "review": {
     "codeModel": "gpt-6.1-sol",
     "securityModel": "gpt-6.1-sol",
+    "altModel": "",
     "claudeCrossFamily": true,
-    "maxFixRounds": 2
+    "maxRounds": 10,
+    "cleanRoundsToStop": 2
   },
   "localDir": "~/.dev-harness/local"
 }

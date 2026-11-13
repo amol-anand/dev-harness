@@ -1,11 +1,10 @@
 {
   "name": "feature-graph",
-  "description": "Multi-repo feature graph for an APPROVED plan: parallel per-repo implement+verify (local only, no commits) → independent code + security review per repo on a different model family → bounded fix loop → cross-repo contract check → consolidated ready-to-ship data. args: { goal: string, plan: string (approved plan text, e.g. output of `dev-harness handoff show`), repos: [{ path, repo, branch, base? }], authorFamily?: 'claude'|'gpt', devModel?: string (default claude-opus-5.5), reviewModel?: string (default gpt-6.1-sol), maxFixRounds?: number }",
+  "description": "Multi-repo feature graph for an APPROVED plan: parallel per-repo implement+verify (local only, no commits) → independent code + security review per repo, round 1 on a different model family from the author, then alternating families in fresh contexts until both reviewers have 2 clean rounds in a row (max 10) → cross-repo contract check → consolidated ready-to-ship data. args: { goal: string, plan: string (approved plan text, e.g. output of `dev-harness handoff show`), repos: [{ path, repo, branch, base? }], authorFamily?: 'claude'|'gpt', devModel?: string (default claude-opus-5.5), reviewModel?: string (default gpt-6.1-sol), altModel?: string (default devModel), maxRounds?: number (default 10), cleanRoundsToStop?: number (default 2) }",
   "phases": [
     { "title": "Implement & verify" },
     { "title": "Independent review" },
-    { "title": "Fix round 1" },
-    { "title": "Fix round 2" },
+    { "title": "Review rounds" },
     { "title": "Cross-repo contract check" },
     { "title": "Summary" }
   ],
@@ -18,7 +17,9 @@
       "authorFamily": { "type": "string", "enum": ["claude", "gpt"] },
       "reviewModel": { "type": "string" },
       "devModel": { "type": "string" },
-      "maxFixRounds": { "type": "integer" },
+      "altModel": { "type": "string" },
+      "maxRounds": { "type": "integer", "minimum": 1 },
+      "cleanRoundsToStop": { "type": "integer", "minimum": 1 },
       "repos": {
         "type": "array",
         "items": {

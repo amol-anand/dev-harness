@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  mkdtempSync, writeFileSync, mkdirSync, rmSync,
+  mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -144,4 +144,87 @@ test('profile lists convention files before Notes, and omits the section when th
   assert.match(out, /## Repo conventions\n[^#]+- `AGENTS\.md`\n- `CLAUDE\.md`\n/);
   assert.ok(out.indexOf('## Repo conventions') < out.indexOf('## Notes'));
   assert.doesNotMatch(renderProfile({ ...facts, conventions: [] }, ''), /Repo conventions/);
+});
+
+test('review prompt claims a different model family only for cross-family rounds', () => {
+  const args = {
+    body: 'BODY', diffPath: '/tmp/c.diff', planPath: '', profile: '', base: 'main',
+  };
+  assert.match(buildReviewPrompt(args), /reviewer from a different model family in a fresh context/);
+  assert.doesNotMatch(buildReviewPrompt({ ...args, crossFamily: false }), /different model family/);
+});
+
+test('submodule filters do not run and a repo with no commits still diffs', () => {
+  const t = mkdtempSync(join(tmpdir(), 'dh-sub-'));
+  try {
+    const sub = join(t, 'sub'); const top = join(t, 'top'); const marker = join(t, 'pwned');
+    const commit = (d) => execFileSync('git', ['-C', d, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'i', '--no-verify']);
+    execFileSync('git', ['init', '-q', sub]);
+    writeFileSync(join(sub, '.gitattributes'), '* filter=s\n');
+    writeFileSync(join(sub, 'f'), 'a\n');
+    execFileSync('git', ['-C', sub, 'add', '-A']); commit(sub);
+    execFileSync('git', ['init', '-q', top]);
+    execFileSync('git', ['-C', top, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'm'], { stdio: 'ignore' });
+    commit(top);
+    execFileSync('git', ['-C', join(top, 'm'), 'config', 'filter.s.clean', `sh -c 'touch ${marker}; cat'`]);
+    writeFileSync(join(top, 'm', 'f'), 'a\nb\n');
+    collectDiff(top);
+    assert.ok(!existsSync(marker));
+    const fresh = join(t, 'fresh');
+    execFileSync('git', ['init', '-q', fresh]);
+    writeFileSync(join(fresh, 'n.txt'), 'first\n');
+    assert.match(collectDiff(fresh).diff, /\+first/);
+  } finally { rmSync(t, { recursive: true, force: true }); }
+});
+
+test('a partial clone cannot lazily fetch through a repo-configured transport while diffing', () => {
+  const t = mkdtempSync(join(tmpdir(), 'dh-lazy-'));
+  try {
+    const src = join(t, 'src'); const c = join(t, 'c'); const marker = join(t, 'pwned');
+    execFileSync('git', ['init', '-q', src]);
+    writeFileSync(join(src, 'f'), 'a\n');
+    execFileSync('git', ['-C', src, 'add', '-A']);
+    execFileSync('git', ['-C', src, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'i', '--no-verify']);
+    execFileSync('git', ['-C', src, 'config', 'uploadpack.allowFilter', 'true']);
+    execFileSync('git', ['clone', '-q', '--no-checkout', '--filter=blob:none', `file://${src}`, c], { stdio: 'ignore' });
+    execFileSync('git', ['-C', c, 'config', 'remote.origin.url', 'ssh://evil/x']);
+    execFileSync('git', ['-C', c, 'config', 'core.sshCommand', `touch ${marker} #`]);
+    execFileSync('git', ['-C', c, 'config', 'protocol.ssh.allow', 'always']);
+    assert.throws(() => collectDiff(c), /git diff failed/);
+    assert.ok(!existsSync(marker));
+  } finally { rmSync(t, { recursive: true, force: true }); }
+});
+
+test("a reviewed repo's git config cannot run commands while diffing", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dh-hard-'));
+  try {
+    execFileSync('git', ['init', '-q', dir]);
+    mkdirSync(join(dir, 'sub'));
+    writeFileSync(join(dir, 'sub', 'a.txt'), 'hello\n');
+    writeFileSync(join(dir, '.gitattributes'), '* filter=x\n*.eq filter=a=b\n');
+    writeFileSync(join(dir, 'f.eq'), 'eq\n');
+    execFileSync('git', ['-C', dir, 'add', '-A']);
+    execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init', '--no-verify']);
+    const marks = ['ext', 'fsmonitor', 'clean', 'process', 'hook', 'eq'].map((m) => join(dir, `pwned-${m}`));
+    const cfg = (k, v) => execFileSync('git', ['-C', dir, 'config', k, v]);
+    cfg('diff.external', `touch ${marks[0]} #`);
+    cfg('core.fsmonitor', `touch ${marks[1]} #`);
+    cfg('filter.x.clean', `sh -c 'touch ${marks[2]}; cat'`);
+    cfg('filter.x.process', `touch ${marks[3]}`);
+    cfg('filter.a=b.clean', `sh -c 'touch ${marks[5]}; cat'`);
+    writeFileSync(join(dir, 'f.eq'), 'eq\nchanged\n');
+    writeFileSync(join(dir, '.git', 'hooks', 'post-index-change'), `#!/bin/sh\ntouch ${marks[4]}\n`, { mode: 0o755 });
+    writeFileSync(join(dir, 'sub', 'a.txt'), 'hello\nworld\n');
+    writeFileSync(join(dir, 'new.txt'), 'untracked\n');
+    writeFileSync(join(dir, '--output=victim'), 'x\n');
+    const { diff } = collectDiff(dir);
+    assert.deepEqual(marks.filter((m) => existsSync(m)).map((m) => m.split('-').pop()), []);
+    assert.ok(!existsSync(join(dir, 'victim')));
+    assert.match(diff, /\+untracked/);
+    assert.match(diff, /\+world/);
+    cfg('include.path', join(dir, 'pad.cfg'));
+    writeFileSync(join(dir, 'pad.cfg'), Array.from({ length: 5000 }, (_, i) => `[filter "pad${i}"]\n\tclean = cat\n`).join(''));
+    assert.throws(() => collectDiff(dir), /too many git filter drivers/);
+    assert.deepEqual(marks.filter((m) => existsSync(m)), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
