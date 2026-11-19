@@ -29,12 +29,14 @@ bash "$HARNESS/install.sh" --dry-run >/dev/null || fail "dry-run exited non-zero
 ok "dry-run makes no changes"
 
 bash "$HARNESS/install.sh" </dev/null >/dev/null
-for p in .copilot/skills/dev .copilot/skills/ship .copilot/agents/code-reviewer.agent.md .claude/skills/dev .claude/agents/security-reviewer.md .local/bin/dev-harness .local/bin/gh-me; do
+for p in .copilot/skills/dev .copilot/skills/ship .copilot/agents/code-reviewer.agent.md .copilot/agents/conventions-reviewer.agent.md .claude/skills/dev .claude/agents/security-reviewer.md .claude/agents/conventions-reviewer.md .local/bin/dev-harness .local/bin/gh-me; do
   [ -L "$HOME/$p" ] || fail "missing link $p"
 done
 ok "skills, agents and CLI linked for both runtimes"
 grep -q "^model: gpt-" "$HOME/.copilot/agents/code-reviewer.agent.md" || fail "copilot agent model not rendered"
+grep -q "^model: gpt-" "$HOME/.copilot/agents/conventions-reviewer.agent.md" || fail "copilot conventions agent model not rendered"
 grep -q "^model: opus" "$HOME/.claude/agents/code-reviewer.md" || fail "claude agent model not rendered"
+grep -q "^model: opus" "$HOME/.claude/agents/conventions-reviewer.md" || fail "claude conventions agent model not rendered"
 ok "agent models rendered per runtime"
 [ "$(cat "$HOME/.claude/skills/review-pr/SKILL.md")" = "user's own skill" ] || fail "overwrote user's existing skill"
 ok "existing unmanaged skill left untouched"

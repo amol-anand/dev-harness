@@ -6,8 +6,8 @@ changes with as little back-and-forth as possible.
 ## Workflow
 - **Every coding task goes through the `dev` skill**: intake → triage → plan (plan-first for anything non-trivial) →
   branch → surgical local implementation → verify → independent code + security review in fresh context, alternating
-  model families until both reviewers have `review.cleanRoundsToStop` clean rounds in a row → ready-to-ship summary →
-  stop.
+  model families until both reviewers have `review.cleanRoundsToStop` clean rounds in a row → one fresh-context
+  conventions review (written rules, sibling code, design system) → ready-to-ship summary → stop.
 - **Plan approval is mandatory for anything beyond a super-minor tweak, in every mode including autopilot**: write the
   plan, show it in the side-panel editor (Copilot app), present it, stop, and continue only after the user explicitly approves (`dev-harness plan approve`). A hook
   blocks larger edits until then.

@@ -11,8 +11,8 @@ intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► 
           ┌──── fresh-context review rounds, alternating model families ◄─────────┘
           │   code-reviewer  ║  security-reviewer      (parallel, read-only)
           │   round 1 = other family from the author, then GPT ↔ Claude; fix between rounds
-          └─► until both clean twice in a row (≤10 rounds) ─► READY-TO-SHIP summary ─► STOP
-                                                         │  you: "ship"
+          └─► until both clean twice in a row (≤10 rounds) ─► conventions-reviewer (once) ─► READY-TO-SHIP summary ─► STOP
+                                                                                    │  you: "ship"
                               commit + push + PR (+ testing plan, Slack summary) ─► lessons captured
 * plan-first is automatic for anything non-trivial: 3+ files, multiple repos, contract/auth changes, unclear "done"
 ```
@@ -26,6 +26,7 @@ intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► 
 | **`review-pr` skill** | Review someone else's PR, re-review after fixes, or triage comments on your own PR. Posts inline comments only after you approve. |
 | **`handoff` / `lessons` skills** | Pause and resume across sessions and tools; turn every correction into a durable rule. |
 | **`code-reviewer` / `security-reviewer` agents** | Independent reviewers that never see the author's conversation. Round 1 runs on a different model family from the author; later rounds alternate families. |
+| **`conventions-reviewer` agent** | Runs once after the review loop: checks the change against the repo's written conventions, its closest sibling implementations and its design system. Pre-existing issues are listed for you to choose. |
 | **Guard hook** (`preToolUse`) | Blocks commit/push/PR before you say "ship", pushes to `main`, plain force-pushes, badly named branches, the app's own branch tools, and `gh` writes made with the wrong account. |
 | **Plan gate** (same hook) | In every mode — including autopilot — file edits beyond a minor tweak (> 2 files, or contract files like `package.json`) are blocked until a plan is written and you've explicitly approved it (`dev-harness plan approve`). |
 | **Session-start hook** | Injects the repo profile, lessons and open handoffs into every new session. Also self-heals the git credential helper. |
@@ -61,7 +62,7 @@ Anything it replaces is backed up to `~/.dev-harness/backups/`, and `--uninstall
 |----------|----------|
 | `~/.local/bin/` | `dev-harness`, `gh-me`, `git-credential-dev-harness` (symlinks; make sure it's on `PATH`) |
 | `~/.copilot/skills/`, `~/.claude/skills/` | `dev`, `ship`, `review-pr`, `handoff`, `lessons` (symlinks; existing skills with the same name are left alone) |
-| `~/.copilot/agents/`, `~/.claude/agents/` | `code-reviewer`, `security-reviewer` (rendered with your configured models) |
+| `~/.copilot/agents/`, `~/.claude/agents/` | `code-reviewer`, `security-reviewer`, `conventions-reviewer` (rendered with your configured models) |
 | `~/.copilot/hooks/dev-harness.json` | guard + session-start hooks for Copilot |
 | `~/.claude/settings.json` | the same hooks, merged in (your other settings are preserved) |
 | `~/.copilot/copilot-instructions.md`, `~/.claude/CLAUDE.md` | symlink to generated instructions: `instructions/global.md` + your private `~/.dev-harness/local/instructions.md` |
@@ -123,7 +124,7 @@ Just ask for work as usual. The `dev` skill picks it up. Useful phrases:
 | A correction ("don't do X") | Recorded as a lesson for this repo (or globally) |
 
 Manual controls: `dev-harness status`, `dev-harness plan status|approve|revoke`, `dev-harness unlock` / `lock`, `dev-harness branch suggest "fix the nav overflow"`,
-`dev-harness review --kind security` (cross-family review from any terminal; the reviewer is told to read the repo's
+`dev-harness review --kind code|security|conventions` (cross-family review from any terminal; the reviewer is told to read the repo's
 convention files, including nested ones next to changed files).
 
 ### Multi-repo features (Copilot)
