@@ -4,7 +4,7 @@ description: >
   Default workflow for ANY coding task (feature, bug fix, refactor, EDS block/styling work, backend/API change) in any
   repository. Triage → branch → plan (auto plan-first for anything non-trivial; stops for approval) → surgical local implementation →
   verify → independent fresh-context code review + security review, alternating model families over rounds → review loop →
-  ready-to-ship summary, then STOP until the user says "ship". Use this instead of ad-hoc coding.
+  one conventions review → ready-to-ship summary, then STOP until the user says "ship". Use this instead of ad-hoc coding.
 ---
 
 # dev — plan → build → verify → independent review → ready to ship
@@ -90,10 +90,12 @@ counts or lengths on each side, changes at the first/last position. Do this for 
 "edge case" tweaks added late. Report the result with its input limits ("3,000 cases, same section count, no empty
 sections"), never as a bare "0 failures", and put any input kinds it did not cover in the plan / review prompt.
 
-**Repo conventions self-check** (before review): re-read the repo's `AGENTS.md`, `CLAUDE.md` and
-`.github/copilot-instructions.md` (repo root and any nested ones next to changed files). For each written rule that
-applies to the diff (e.g. "avoid `let`", "destructured params", "no comments that restate code"), confirm the new code
-follows it or fix it. Nearby code breaking a rule is not a reason to break it too.
+**Repo conventions self-check** (before review): re-read the repo's `AGENTS.md`, `CLAUDE.md`,
+`.github/copilot-instructions.md` (repo root and any nested ones next to changed files), `CONTRIBUTING*` and any style
+guide they point to. For each written rule that applies to the diff (e.g. "avoid `let`", "destructured params", "no
+comments that restate code"), confirm the new code follows it or fix it. Nearby code breaking a rule is not a reason to
+break it too. Also open the closest sibling implementation (another block, plugin, route or module of the same kind)
+and reuse its helpers, naming, error/return shapes and design-system assets instead of re-creating them.
 
 ## 6. Independent review (always — every change)
 Reviewers get fresh context and no shell: first run `dev-harness diff` (prints the path of a diff file covering
@@ -143,6 +145,24 @@ Follow your output format." Re-run `dev-harness diff` before every review round.
   (recommend a number) or stop here. Present the ready-to-ship summary only after the user decides.
 - Tell the user one line per round: round number, model, code/security result, streaks.
 
+## 7b. Conventions review (once, after the loop)
+Once the code/security loop has converged (or the user chose to stop it), run ONE fresh-context `conventions-reviewer`
+per repo. It asks "does this change look like it belongs in this repo?": written conventions (convention files,
+`CONTRIBUTING*`, style guides), the closest sibling implementations (shared helpers, naming, error/return shapes,
+behaviour every sibling has) and the design system. It catches what the code reviewer misses.
+- Re-run `dev-harness diff` and give it the same inputs as the other reviewers. Use the round-1 model (the one from a
+  different family than the author).
+- **Copilot**: a new background `task` subagent with `agent_type: "conventions-reviewer"` and that `model`.
+  **Claude Code**: `dev-harness review --kind conventions --model <round-1 model> --plan "$(dev-harness handoff path)"`
+  (add `--author-model <id>` when the code was not written by `dev.claudeModel`).
+- Fix every `introduced` finding. List the `pre-existing` ones (each with its location and source) and ask the user
+  which to fix in this change; fix those too.
+- If anything changed, re-verify and resume the code/security loop (both streaks reset to 0; rounds keep counting
+  toward `review.maxRounds`) until it converges again. If no rounds are left or the user had stopped the loop, ask the
+  user how many more rounds to run on the fixes; never show the ready-to-ship summary with unreviewed fixes. In
+  multi-repo work, re-run the contract check afterwards. Don't run the conventions reviewer again.
+- Tell the user one line: model, verdict, introduced/pre-existing counts, what was fixed.
+
 ## 8. Ready-to-ship summary — then STOP
 For EDS / DA repos, if the `docs-drift-check` skill is installed, run it on the diff first and list any aem.live or
 docs.da.live pages that need updating under **Docs** (or "none").
@@ -151,6 +171,7 @@ docs.da.live pages that need updating under **Docs** (or "none").
 **What & why:** 3–6 bullets
 **Verified:** commands run → results; manual checks; anything not verified
 **Review:** <N> rounds (models used) · code <verdict> · security <verdict> · fixed: … · open/disputed: …
+**Conventions:** <model> · <verdict> · fixed: … · pre-existing left as is: …
 **Remaining issues:** any still open or disputed, by severity, or "none"
 **Back-compat:** consumers checked and why they keep working
 **Docs:** pages to update, or "none" (EDS / DA repos with docs-drift-check)

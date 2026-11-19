@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
 import {
-  mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync,
+  mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync, readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -116,6 +116,45 @@ test('handoff write/show/done via CLI and session-start listing', () => {
   assert.match(run('session-start.mjs', { cwd: repo }).additionalContext, /Open handoffs/);
   cli(['handoff', 'done']);
   assert.doesNotMatch(run('session-start.mjs', { cwd: repo }).additionalContext, /Open handoffs/);
+});
+
+test('review accepts --kind conventions and rejects unknown kinds', () => {
+  const bin = join(home, 'fake-bin');
+  const argsFile = join(home, 'copilot-args.json');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'copilot'), `#!/usr/bin/env node\nrequire('fs').writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));\nconsole.log('VERDICT: PASS');\n`, { mode: 0o755 });
+  const config = join(home, 'review-config.json');
+  writeFileSync(config, JSON.stringify({ github: { account: 'octo-dev' }, review: { codeModel: 'gpt-code', securityModel: 'gpt-sec' } }));
+  const cliEnv = { ...env, PATH: `${bin}:${env.PATH}`, DEV_HARNESS_CONFIG: config };
+  const cli = (args) => spawnSync('node', [join(ROOT, 'bin', 'dev-harness'), ...args], { cwd: repo, env: cliEnv, encoding: 'utf8' });
+  const sent = () => {
+    const a = JSON.parse(readFileSync(argsFile, 'utf8'));
+    return { prompt: a[a.indexOf('-p') + 1], model: a[a.indexOf('--model') + 1] };
+  };
+  assert.match(cli(['review', '--kind', 'conventions', '--base', 'HEAD']).stdout, /No changes to review/);
+  writeFileSync(join(repo, 'conv.js'), 'x');
+  try {
+    const r = cli(['review', '--kind', 'conventions', '--base', 'HEAD']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /VERDICT: PASS/);
+    assert.match(sent().prompt, /does this change look like it belongs in this repo\?/);
+    assert.equal(sent().model, 'gpt-code');
+    const o = cli(['review', '--kind', 'conventions', '--base', 'HEAD', '--model', 'claude-opus-5.5']);
+    assert.equal(o.status, 0, o.stderr);
+    assert.equal(sent().model, 'claude-opus-5.5');
+    const s = cli(['review', '--kind', 'security', '--base', 'HEAD']);
+    assert.equal(s.status, 0, s.stderr);
+    assert.match(sent().prompt, /application security engineer/);
+    assert.equal(sent().model, 'gpt-sec');
+    const c = cli(['review', '--kind', 'code', '--base', 'HEAD']);
+    assert.equal(c.status, 0, c.stderr);
+    assert.equal(sent().model, 'gpt-code');
+  } finally {
+    rmSync(join(repo, 'conv.js'));
+  }
+  const bad = cli(['review', '--kind', 'style']);
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /--kind must be code, security or conventions/);
 });
 
 test('plan gate end to end: blocks a 3rd file until plan written + approved', () => {

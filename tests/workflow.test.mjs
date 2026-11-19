@@ -75,6 +75,8 @@ test('review rounds alternate models and stop after two clean rounds per repo', 
   assert.equal(out.repos[1].securityVerdict, 'NO_FINDINGS');
   assert.equal(out.repos[1].openFindings.length, 0);
   assert.match(out.next, /wait for "ship"/);
+  assert.match(out.next, /conventions-reviewer/);
+  assert.match(out.next, /do NOT re-run this workflow/);
 });
 
 test('stops after maxRounds and reports open findings; gpt author gets claude reviewer first', async () => {
@@ -191,6 +193,7 @@ test('a LOW the fixer cannot clear keeps the loop going and is reported open aft
   assert.deepEqual(out.repos[0].openFindings.map((f) => f.location), ['a.js:4']);
   assert.match(out.repos[0].reviewStoppedBy, /maxRounds \(3\) reached; clean streak code 0\/2, security 3\/2/);
   assert.match(out.next, /ask the user whether to run more rounds/);
+  assert.match(out.next, /conventions-reviewer/);
 });
 
 test('cleanRoundsToStop 1 stops after one clean round', async () => {

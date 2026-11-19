@@ -71,7 +71,7 @@ Plan gate
 
 Review & knowledge
   diff [--base <ref>]     Write the change (committed + uncommitted + untracked vs merge-base) to a file; print its path
-  review --kind code|security [--base <ref>] [--model <id>] [--author-model <id>] [--plan <file>]
+  review --kind code|security|conventions [--base <ref>] [--model <id>] [--author-model <id>] [--plan <file>]
                           Cross-family fresh-context review via the Copilot CLI (read-only)
   lesson add "<text>" [--global]
                           Append a lesson for this repo (or global)
@@ -202,8 +202,8 @@ function profileInit() {
 
 function review() {
   const kind = opt('kind', 'code');
-  if (!['code', 'security'].includes(kind)) throw new Error('--kind must be code or security');
-  const model = opt('model', kind === 'code' ? cfg.review.codeModel : cfg.review.securityModel);
+  if (!['code', 'security', 'conventions'].includes(kind)) throw new Error('--kind must be code, security or conventions');
+  const model = opt('model', kind === 'security' ? cfg.review.securityModel : cfg.review.codeModel);
   const {
     diff, base, root, files,
   } = collectDiff(cwd, opt('base'));

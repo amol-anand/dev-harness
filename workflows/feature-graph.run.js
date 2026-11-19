@@ -192,7 +192,7 @@ async (ctx) => {
     contract,
     contractError,
     next: states.some((s) => s.stoppedBy || s.disputed.length) || states.length < repos.length || (repos.length > 1 && !isClean(contract))
-      ? 'Review did not fully converge: list every remaining issue (each repo\'s openFindings, disputedFindings and reviewStoppedBy, plus the contract verdict, findings or contractError) by severity and ask the user whether to run more rounds or stop here.'
-      : 'Present the ready-to-ship summary to the user and wait for "ship".',
+      ? 'Review did not fully converge: list every remaining issue (each repo\'s openFindings, disputedFindings and reviewStoppedBy, plus the contract verdict, findings or contractError) by severity and ask the user whether to run more rounds or stop here. Once the user decides, run the one-time conventions-reviewer per repo (dev skill §7b) before the ready-to-ship summary.'
+      : 'Run the one-time conventions-reviewer per repo (dev skill §7b). If its fixes change code, do NOT re-run this workflow; continue the dev skill §7 review loop by hand for those repos, starting at round reviewRounds + 1 and keeping the model alternation, then run the contract check again. Then present the ready-to-ship summary to the user and wait for "ship".',
   };
 }

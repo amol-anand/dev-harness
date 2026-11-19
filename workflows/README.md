@@ -23,6 +23,11 @@ both must be positive integers (`maxFixRounds` is rejected). A repo that stops f
 fixer disagreed with (severity, location, issue, reason, round). If any repo stopped, has disputes, or the contract
 check failed (`contractError`) or is not clean, `next` tells the agent to list everything by severity and ask whether to run more rounds.
 
+The workflow does not run the one-time `conventions-reviewer`. On a clean run, `next` tells the agent to run it once
+per repo (`dev` skill §7b). If its fixes change code, don't re-run the workflow (that re-implements and resets the
+round budget). Continue the manual §7 loop for those repos, keeping the round count and model alternation, then repeat
+the contract check.
+
 ### Running it in the GitHub Copilot app
 Dynamic workflows are session-scoped, so register the graph in the session that needs it. Ask the agent:
 
@@ -53,4 +58,5 @@ Set `limits` only if you have a budget in mind.
 ### Claude Code
 Claude Code has no dynamic-workflow runtime. The `dev` skill runs the same graph by hand: one background subagent per
 repo for implement+verify, then the review rounds with `dev-harness review --kind code|security --model <round model>`
-per repo in parallel, then a contract-check subagent once every repo has converged.
+per repo in parallel, then a contract-check subagent once every repo has converged, then one
+`dev-harness review --kind conventions` per repo (`dev` skill §7b).
