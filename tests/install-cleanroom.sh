@@ -111,6 +111,7 @@ echo "$OUT" | grep -q '"permissionDecision":"deny"' || fail "installed guard did
 OUT="$(echo "{\"toolName\":\"bash\",\"toolArgs\":{\"command\":\"git status\"},\"cwd\":\"$REPO\"}" | bash -c "$HOOK_CMD")"
 [ -z "$OUT" ] || fail "installed guard blocked harmless command"
 CL_CMD="$(node -p 'const e=require(process.env.HOME+"/.claude/settings.json").hooks.PreToolUse.find(e=>e.hooks[0].command.includes("DEV_HARNESS_HOOK")); if(!/Edit/.test(e.matcher)||!/Write/.test(e.matcher)||!/Bash/.test(e.matcher)) process.exit(1); e.hooks[0].command')" || fail "claude matcher misses edit tools"
+git -C "$REPO" switch -q -c fix-ui
 echo 1 > "$REPO/a.js"; echo 1 > "$REPO/b.js"
 OUT="$(echo "{\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$REPO/c.js\"},\"cwd\":\"$REPO\"}" | bash -c "$CL_CMD")"
 echo "$OUT" | grep -q "Plan gate" || fail "installed Claude hook did not gate Write: $OUT"

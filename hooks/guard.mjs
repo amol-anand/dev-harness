@@ -3,19 +3,19 @@
 // Must never crash: Copilot treats a failing command preToolUse hook as "deny".
 import { homedir } from 'node:os';
 import { loadConfig } from '../lib/config.mjs';
-import { evaluateCommand } from '../lib/rules.mjs';
+import { evaluateCommand, validateBranch } from '../lib/rules.mjs';
 import { makeGitInfo, repoSlug } from '../lib/git.mjs';
 import {
   EDIT_TOOLS, editTargets, canonical, repoState, isPlanApproved, planGateDecision,
 } from '../lib/plangate.mjs';
 import { handoffPathFor } from '../lib/context.mjs';
 import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const SHELL_TOOLS = new Set(['bash', 'Bash', 'shell', 'run_in_terminal']);
-const APP_BRANCH_TOOLS = new Set(['rename_branch']);
-const APP_BRANCH_REASON = 'Do not use the app\'s branch tools. Create the branch yourself: '
-  + 'dev-harness branch check <name> && git switch -c <name>.';
+const RENAME_TOOL = 'rename_branch';
+const BRANCH_HINT = 'Pick a name from the task with `dev-harness branch suggest "<what changes>"`.';
 
 function readStdin() {
   return new Promise((res) => {
@@ -47,24 +47,53 @@ function emit(claude, decision, reason) {
   process.stdout.write(JSON.stringify(out));
 }
 
-function checkPlanGate(tool, args, cwd) {
+function originSlug(dir) {
+  try {
+    return repoSlug(execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }).trim());
+  } catch { return ''; }
+}
+
+function checkRename(args, cwd) {
+  const name = args?.name;
+  if (typeof name !== 'string' || !name) return `rename_branch needs a branch name. ${BRANCH_HINT}`;
   const cfg = loadConfig();
-  if (!cfg.planGate.enabled) return null;
+  if (cfg.git.protectedBranches.includes(name)) return `Refusing to rename the branch to protected branch "${name}". ${BRANCH_HINT}`;
+  return validateBranch(name, cfg, originSlug(cwd));
+}
+
+function branchProblem(branch, repo, cfg, root) {
+  if (!branch || branch === 'HEAD') return null;
+  const fix = 'Before editing, rename it (app worktree: rename_branch; otherwise: git switch -c <name>). '
+    + `${BRANCH_HINT} Plan approval does not carry over to the new branch.`;
+  const label = repo || `repository ${root}`;
+  if (cfg.git.protectedBranches.includes(branch)) return `Editing files on protected branch "${branch}" of ${label}. ${fix}`;
+  const problem = validateBranch(branch, cfg, repo);
+  if (!problem) return null;
+  return repo ? `${problem} ${fix}` : `${problem} (${label}) ${fix}`;
+}
+
+function checkEdit(tool, args, cwd) {
+  const cfg = loadConfig();
   const groups = new Map();
-  for (const t of editTargets(tool, args, cwd).map(canonical)) {
+  // A symlink belongs to the repo it sits in, while edits through it land in its destination: check both
+  // repos' branches, but only the destination counts toward the plan gate.
+  const paths = editTargets(tool, args, cwd);
+  const targets = new Set(paths.map(canonical));
+  const links = paths.map((p) => join(canonical(dirname(p)), basename(p)));
+  for (const t of new Set([...targets, ...links])) {
     const st = repoState(t);
     if (!st) continue;
     if (!groups.has(st.root)) groups.set(st.root, { st, targets: [] });
-    groups.get(st.root).targets.push(t);
+    if (targets.has(t)) groups.get(st.root).targets.push(t);
   }
-  for (const { st, targets } of groups.values()) {
-    let remote = '';
-    try { remote = execFileSync('git', ['-C', st.root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }); } catch { /* none */ }
-    const repo = repoSlug(remote.trim());
-    if (!repo) continue;
+  for (const { st, targets: gated } of groups.values()) {
+    const repo = originSlug(st.root);
+    const bad = branchProblem(st.branch, repo, cfg, st.root);
+    if (bad) return bad;
+    if (!repo || !gated.length || !cfg.planGate.enabled) continue;
     const hp = handoffPathFor(cfg, repo, st.branch);
     const planExists = existsSync(hp) && readFileSync(hp, 'utf8').trim().length > 0;
-    const reason = planGateDecision(targets, {
+    const reason = planGateDecision(gated, {
       ...st, repo, planExists, approved: isPlanApproved(st.root, st.branch),
     }, cfg);
     if (reason) return reason;
@@ -78,12 +107,14 @@ async function main() {
   const {
     claude, tool, args, command, cwd,
   } = extract(JSON.parse(raw));
-  if (APP_BRANCH_TOOLS.has(tool)) {
-    emit(claude, 'deny', `[dev-harness] ${APP_BRANCH_REASON}`);
+  if (tool === RENAME_TOOL) {
+    const reason = checkRename(args, cwd);
+    if (reason) emit(claude, 'deny', `[dev-harness] ${reason}`);
     return;
   }
-  if (EDIT_TOOLS.has(tool)) {
-    const reason = checkPlanGate(tool, args, cwd);
+  const readOnly = tool === 'str_replace_editor' && args?.command === 'view';
+  if (EDIT_TOOLS.has(tool) && !readOnly) {
+    const reason = checkEdit(tool, args, cwd);
     if (reason) emit(claude, 'deny', `[dev-harness] ${reason}`);
     return;
   }

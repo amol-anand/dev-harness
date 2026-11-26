@@ -8,10 +8,12 @@ say so. Where possible the rules are enforced by hooks rather than left to instr
 ```
 intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► implement (local only) ─► verify
                                                                                   │
-          ┌──── fresh-context review rounds, alternating model families ◄─────────┘
-          │   code-reviewer  ║  security-reviewer      (parallel, read-only)
-          │   round 1 = other family from the author, then GPT ↔ Claude; fix between rounds
-          └─► until both clean twice in a row (≤10 rounds) ─► conventions-reviewer (once) ─► READY-TO-SHIP summary ─► STOP
+          ┌──── fresh-context code-reviewer rounds, alternating model families ◄──┘
+          │   round 1 = other family from the author, then GPT ↔ Claude; fix MEDIUM+ between rounds (LOWs advisory)
+          │   (+ early security-reviewer pass for security-sensitive work)
+          └─► until 2 clean rounds in a row (≤10 rounds) ─► conventions-reviewer (once)
+              ─► security-reviewer on the final diff ─► READY-TO-SHIP summary ─► STOP
+                    (any later fix: code rounds again, then a new final security review)
                                                                                     │  you: "ship"
                               commit + push + PR (+ testing plan, Slack summary) ─► lessons captured
 * plan-first is automatic for anything non-trivial: 3+ files, multiple repos, contract/auth changes, unclear "done"
@@ -25,13 +27,13 @@ intake ─► triage ─► branch ─► plan* ─► STOP: you approve ─► 
 | **`ship` skill** | Commit, push and PR (stacked/multi-repo aware) with description, reviewer testing plan and a Slack-ready summary. |
 | **`review-pr` skill** | Review someone else's PR, re-review after fixes, or triage comments on your own PR. Posts inline comments only after you approve. |
 | **`handoff` / `lessons` skills** | Pause and resume across sessions and tools; turn every correction into a durable rule. |
-| **`code-reviewer` / `security-reviewer` agents** | Independent reviewers that never see the author's conversation. Round 1 runs on a different model family from the author; later rounds alternate families. |
-| **`conventions-reviewer` agent** | Runs once after the review loop: checks the change against the repo's written conventions, its closest sibling implementations and its design system. Pre-existing issues are listed for you to choose. |
-| **Guard hook** (`preToolUse`) | Blocks commit/push/PR before you say "ship", pushes to `main`, plain force-pushes, badly named branches, the app's own branch tools, and `gh` writes made with the wrong account. |
+| **`code-reviewer` / `security-reviewer` agents** | Independent reviewers that never see the author's conversation. Code rounds alternate model families, starting with a different family from the author; security reviews the final diff on a different family from the author (and also early for security-sensitive work). Blocking findings need a concrete trigger and consequence. |
+| **`conventions-reviewer` agent** | Runs once after the code rounds (except on the small CSS-only path): checks the change against the repo's written conventions, its closest sibling implementations and its design system. Pre-existing issues are listed for you to choose. |
+| **Guard hook** (`preToolUse`) | Blocks commit/push/PR before you say "ship", pushes to `main`, plain force-pushes, badly named branches (via git or the app's `rename_branch`), file edits in a repo whose current branch is protected or breaks the naming rules, and `gh` writes made with the wrong account. |
 | **Plan gate** (same hook) | In every mode — including autopilot — file edits beyond a minor tweak (> 2 files, or contract files like `package.json`) are blocked until a plan is written and you've explicitly approved it (`dev-harness plan approve`). |
 | **Session-start hook** | Injects the repo profile, lessons and open handoffs into every new session. Also self-heals the git credential helper. |
 | **`gh-me` + credential helper** | Always act as *your* GitHub account, even when the host injects a different `GH_TOKEN`. |
-| **`feature-graph` workflow** | Copilot dynamic workflow that fans a multi-repo plan out to parallel implement/review agents. |
+| **`feature-graph` workflow** | Legacy, opt-in only: a Copilot dynamic workflow that fans a multi-repo plan out to parallel implement/review agents with stricter paired code + security rounds. |
 | **`dev-harness` CLI** | `init`, `doctor`, `status`, `unlock`/`lock`, `branch check|suggest`, `profile init`, `diff`, `review`, `lesson add`, `handoff path`, `audit`. |
 
 ## Prerequisites
@@ -85,7 +87,7 @@ Your settings live in `~/.dev-harness/config.json` (see [`config.example.json`](
 | `review.codeModel` / `securityModel` | Cross-family reviewer models (default `gpt-6.1-sol`): round 1 when the author is a different family, otherwise round 2. Must be a different family from `dev.model`; `doctor` checks this. |
 | `review.altModel` | Model used on alternate review rounds. Blank (default) = `dev.model`, e.g. `claude-opus-5.5`. Must be a different family from the round-1 models; `doctor` checks this. |
 | `planGate.enabled` / `maxUnplannedFiles` / `contractFiles` / `excludeRepos` | Plan gate: how many changed files count as a minor tweak (default 2), which files always need a plan, and repos to skip. |
-| `review.maxRounds` / `cleanRoundsToStop` | Review stops when both reviewers have `cleanRoundsToStop` (default 2) rounds in a row with no findings (LOWs and nits are fixed too), or after `maxRounds` (default 10). Anything still open is listed and you decide whether to run more rounds. |
+| `review.maxRounds` / `cleanRoundsToStop` | Code review stops when the code reviewer has `cleanRoundsToStop` (default 2) rounds in a row with no MEDIUM-or-higher findings, or after `maxRounds` (default 10) code rounds, recheck rounds after later fixes included. LOWs are listed for you, not fixed automatically. Then one conventions review and a final security review; any fix they lead to gets code rounds and a new final security review. Anything still open is listed and you decide whether to run more rounds. Presentation-only CSS in at most 2 files of one repo needs one clean code round and skips the conventions reviewer (see the `dev` skill). The legacy `feature-graph` workflow keeps its stricter paired rounds. |
 | `skills.extra` | Skills from other local repos to install alongside the harness, as a list of skill folder paths, e.g. `["~/code/team-skills/skills/pull-request"]`. See [Extra skills](#extra-skills). |
 | `localDir` | Private overlay for profiles, lessons, handoffs, personal instructions and the audit denylist. |
 
@@ -127,9 +129,10 @@ Manual controls: `dev-harness status`, `dev-harness plan status|approve|revoke`,
 `dev-harness review --kind code|security|conventions` (cross-family review from any terminal; the reviewer is told to read the repo's
 convention files, including nested ones next to changed files).
 
-### Multi-repo features (Copilot)
-For approved plans spanning several repos, ask the agent to run the **feature-graph** workflow. See
-[`workflows/README.md`](workflows/README.md).
+### Multi-repo features
+The `dev` skill handles multi-repo plans by itself: code rounds per repo, a cross-repo contract check, then the
+conventions and final security reviews per repo. The legacy **feature-graph** workflow (Copilot only) is opt-in:
+use it only when you explicitly ask for it. See [`workflows/README.md`](workflows/README.md).
 
 ## Copilot vs Claude Code differences
 
@@ -137,7 +140,7 @@ For approved plans spanning several repos, ask the agent to run the **feature-gr
 |---|---|---|
 | Hooks | `~/.copilot/hooks/dev-harness.json` (`preToolUse`, `sessionStart`) | merged into `~/.claude/settings.json` (`PreToolUse` on `Bash`, `SessionStart`) |
 | Cross-family review | reviewer agents pinned to `review.*Model` (e.g. GPT reviewing Claude) | `dev-harness review --model <round model>` via the Copilot CLI (required; the loop stops without it) |
-| Multi-repo graph | `feature-graph` dynamic workflow | the `dev` skill runs the review loop per repo, then a contract check |
+| Multi-repo graph | the `dev` skill per repo + contract check (legacy opt-in: `feature-graph` dynamic workflow) | the `dev` skill per repo + contract check |
 | Plan approval | plan mode / `exit_plan_mode` | plan mode |
 
 **Tool approvals**: when the guard blocks something, the agent gets the reason and the fix (for example "use `gh-me …`" or

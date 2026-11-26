@@ -74,7 +74,8 @@ test('branch creation and rename rules', () => {
   allow('git branch -m fix-thing');
   deny('git worktree add -b octo-x ../wt');
   const reason = deny('git push -u origin HEAD', ctx({ info: { branch: 'octo-dev-glowing-doodle' } }));
-  assert.match(reason, /git branch -m glowing-doodle/);
+  assert.match(reason, /"glowing-doodle"/);
+  assert.match(reason, /rename_branch tool, never `git branch -m`; in an ordinary checkout run `git switch -c <name>`/);
 });
 
 test('ship gate', () => {

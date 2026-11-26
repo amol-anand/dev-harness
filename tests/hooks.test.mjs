@@ -5,7 +5,7 @@ import {
   mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync, readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -82,10 +82,156 @@ test('fail-safe: malformed input never blocks', () => {
   assert.equal(run('guard.mjs', { toolName: 'bash', toolArgs: { command: 'git commit -m x' }, cwd: repo }, { DEV_HARNESS_CONFIG: join(home, 'broken.json') }), null);
 });
 
-test('app branch tools are denied in favour of git', () => {
-  const out = run('guard.mjs', { toolName: 'rename_branch', toolArgs: { name: 'fix-nav' }, cwd: repo });
-  assert.equal(out.permissionDecision, 'deny');
-  assert.match(out.permissionDecisionReason, /git switch -c <name>/);
+test('rename_branch is validated with the branch rules', () => {
+  const config = join(home, 'rename-config.json');
+  writeFileSync(config, JSON.stringify({
+    github: { account: 'octo-dev' },
+    git: { branch: { forbidSubstrings: ['octo'], rules: [{ repos: ['acme/web'], maxLength: 8 }] } },
+  }));
+  const rename = (toolArgs, cwd = repo) => run('guard.mjs', { toolName: 'rename_branch', toolArgs, cwd }, { DEV_HARNESS_CONFIG: config });
+  assert.equal(rename({ name: 'fix-nav' }), null);
+  assert.equal(rename(JSON.stringify({ name: 'fix-nav' })), null);
+  assert.match(rename({ name: 'fix-navbar' }).permissionDecisionReason, /longer than 8 chars for acme\/web/);
+  assert.equal(rename({ name: 'fix-navbar' }, home), null, 'per-repo limit only applies in that repo');
+  assert.match(rename({ name: 'octo-fix' }).permissionDecisionReason, /contains "octo"/);
+  assert.match(rename({ name: 'main' }).permissionDecisionReason, /protected branch "main"/);
+  for (const bad of [{}, { name: '' }, { name: 7 }, 'not json']) {
+    assert.match(rename(bad).permissionDecisionReason, /needs a branch name/);
+  }
+  const claude = run('guard.mjs', { hook_event_name: 'PreToolUse', tool_name: 'rename_branch', tool_input: { name: 'Fix_Nav' }, cwd: repo });
+  assert.match(claude.hookSpecificOutput.permissionDecisionReason, /not lowercase-kebab/);
+});
+
+test('edits are blocked while the current branch breaks the rules, even with the plan gate off', () => {
+  const config = join(home, 'nogate-config.json');
+  writeFileSync(config, JSON.stringify({ github: { account: 'octo-dev' }, git: { branch: { forbidSubstrings: ['octo'] } }, planGate: { enabled: false } }));
+  const edit = (payload, extraEnv) => run('guard.mjs', payload, extraEnv);
+  const copilot = { toolName: 'edit', toolArgs: { path: 'a.css' }, cwd: repo };
+  const claude = { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: join(repo, 'a.css') }, cwd: repo };
+  execFileSync('git', ['-C', repo, 'switch', '-q', '-c', 'octo-dev-session'], { env });
+  try {
+    for (const extraEnv of [{}, { DEV_HARNESS_CONFIG: config }]) {
+      assert.match(edit(copilot, extraEnv).permissionDecisionReason, /contains "octo".*rename_branch/);
+      assert.match(edit(claude, extraEnv).hookSpecificOutput.permissionDecisionReason, /contains "octo"/);
+      assert.equal(edit({ toolName: 'view', toolArgs: { path: 'a.css' }, cwd: repo }, extraEnv), null);
+      assert.equal(edit({ toolName: 'create', toolArgs: { path: join(home, 'scratch.md') }, cwd: repo }, extraEnv), null);
+    }
+    const patch = `*** Begin Patch\n*** Add File: ${join(home, 'notes.md')}\n*** Update File: ${join(repo, 'a.css')}\n*** End Patch`;
+    assert.match(edit({ toolName: 'apply_patch', toolArgs: JSON.stringify({ input: patch }), cwd: home }).permissionDecisionReason, /octo-dev-session/);
+    execFileSync('git', ['-C', repo, 'switch', '-q', 'main'], { env });
+    assert.match(edit(copilot, { DEV_HARNESS_CONFIG: config }).permissionDecisionReason, /protected branch "main"/);
+  } finally {
+    execFileSync('git', ['-C', repo, 'switch', '-q', 'fix-nav'], { env });
+    execFileSync('git', ['-C', repo, 'branch', '-q', '-D', 'octo-dev-session'], { env });
+  }
+  assert.equal(edit(copilot, { DEV_HARNESS_CONFIG: config }), null);
+  assert.equal(edit(copilot), null);
+});
+
+test('branch rules apply to edits in repos without a GitHub origin', () => {
+  const config = join(home, 'nogate-config.json');
+  writeFileSync(config, JSON.stringify({ github: { account: 'octo-dev' }, git: { branch: { forbidSubstrings: ['octo'] } }, planGate: { enabled: false } }));
+  const local = join(home, 'code', 'local-only');
+  const gitlab = join(home, 'code', 'gitlab');
+  for (const dir of [local, gitlab]) {
+    mkdirSync(dir, { recursive: true });
+    execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main'], { env });
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { env });
+  }
+  execFileSync('git', ['-C', gitlab, 'remote', 'add', 'origin', 'https://gitlab.com/acme/web.git'], { env });
+  try {
+    for (const dir of [local, gitlab]) {
+      const edit = (extraEnv) => run('guard.mjs', { toolName: 'edit', toolArgs: { path: join(dir, 'a.css') }, cwd: dir }, extraEnv);
+      for (const extraEnv of [{}, { DEV_HARNESS_CONFIG: config }]) {
+        execFileSync('git', ['-C', dir, 'switch', '-q', 'main'], { env });
+        assert.match(edit(extraEnv).permissionDecisionReason, new RegExp(`protected branch "main" of repository \\S*${basename(dir)}\\.`));
+        execFileSync('git', ['-C', dir, 'switch', '-q', '-c', 'octo-dev-x'], { env });
+        assert.match(edit(extraEnv).permissionDecisionReason, new RegExp(`contains "octo".*\\(repository \\S*${basename(dir)}\\)`));
+        execFileSync('git', ['-C', dir, 'switch', '-q', '-c', 'fix-ui'], { env });
+        assert.equal(edit(extraEnv), null);
+        execFileSync('git', ['-C', dir, 'switch', '-q', 'main'], { env });
+        execFileSync('git', ['-C', dir, 'branch', '-q', '-D', 'octo-dev-x', 'fix-ui'], { env });
+      }
+    }
+  } finally {
+    for (const dir of [local, gitlab]) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('edits through a symlink check the repo holding the link and the repo it points to', () => {
+  const links = join(home, 'code', 'links');
+  const dest = join(home, 'code', 'dest');
+  const outside = join(home, 'outside.txt');
+  for (const [dir, branch] of [[links, 'main'], [dest, 'octo-dev-x']]) {
+    mkdirSync(dir, { recursive: true });
+    execFileSync('git', ['-C', dir, 'init', '-q', '-b', branch], { env });
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { env });
+  }
+  writeFileSync(outside, 'x');
+  writeFileSync(join(dest, 'a.css'), 'x');
+  symlinkSync(outside, join(links, 'out-link'));
+  symlinkSync(join(dest, 'a.css'), join(links, 'in-link'));
+  const patch = (...ops) => run('guard.mjs', { toolName: 'apply_patch', toolArgs: { input: `*** Begin Patch\n${ops.join('\n')}\n*** End Patch` }, cwd: home });
+  try {
+    assert.match(patch(`*** Delete File: ${join(links, 'out-link')}`).permissionDecisionReason, /protected branch "main" of repository \S*links\./);
+    assert.match(patch(`*** Update File: ${join(links, 'out-link')}`, `*** Move to: ${join(home, 'moved.txt')}`).permissionDecisionReason, /protected branch "main" of repository \S*links\./);
+    assert.equal(run('guard.mjs', { toolName: 'view', toolArgs: { path: join(links, 'out-link') }, cwd: home }), null);
+    execFileSync('git', ['-C', links, 'switch', '-q', '-c', 'fix-ui'], { env });
+    assert.equal(patch(`*** Delete File: ${join(links, 'out-link')}`, `*** Add File: ${join(home, 'scratch-2.md')}`), null);
+    assert.match(patch(`*** Delete File: ${join(links, 'in-link')}`).permissionDecisionReason, /contains "octo".*\(repository \S*dest\)/);
+  } finally {
+    for (const p of [links, dest, outside]) rmSync(p, { recursive: true, force: true });
+  }
+});
+
+test('plan gate counts only where a symlink edit lands, not the link itself', () => {
+  const g = (...a) => execFileSync('git', ['-C', repo, ...a], { env });
+  const outside = join(home, 'alias-outside.txt');
+  const edit = (p) => run('guard.mjs', { toolName: 'edit', toolArgs: { path: join(repo, p) }, cwd: repo });
+  g('switch', '-q', '-c', 'alias-test');
+  try {
+    writeFileSync(join(repo, 'AGENTS.md'), 'a');
+    writeFileSync(outside, 'x');
+    symlinkSync('AGENTS.md', join(repo, 'CLAUDE.md'));
+    symlinkSync(outside, join(repo, 'ext-link'));
+    g('add', 'AGENTS.md', 'CLAUDE.md', 'ext-link');
+    g('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'alias');
+    writeFileSync(join(repo, 'other.js'), '1');
+    assert.equal(edit('CLAUDE.md'), null, 'link + destination count once');
+    writeFileSync(join(repo, 'AGENTS.md'), 'b');
+    assert.equal(edit('CLAUDE.md'), null, 'already-changed destination adds nothing');
+    assert.equal(edit('ext-link'), null, 'a link to a file outside the repo is not gated in the repo holding it');
+    assert.equal(edit('c.js').permissionDecision, 'deny');
+  } finally {
+    rmSync(join(repo, 'other.js'), { force: true });
+    rmSync(outside, { force: true });
+    g('checkout', '-q', '--', '.');
+    g('switch', '-q', 'fix-nav');
+    g('branch', '-q', '-D', 'alias-test');
+  }
+});
+
+test('str_replace_editor view is read-only; its mutating commands stay gated', () => {
+  const config = join(home, 'nogate-config.json');
+  writeFileSync(config, JSON.stringify({ github: { account: 'octo-dev' }, git: { branch: { forbidSubstrings: ['octo'] } }, planGate: { enabled: false } }));
+  const path = join(repo, 'a.css');
+  const view = { command: 'view', path };
+  const mutate = { command: 'str_replace', path, old_str: 'a', new_str: 'b' };
+  try {
+    for (const branch of ['main', 'octo-dev-session']) {
+      execFileSync('git', ['-C', repo, 'switch', '-q', ...(branch === 'main' ? [] : ['-c']), branch], { env });
+      for (const extraEnv of [{}, { DEV_HARNESS_CONFIG: config }]) {
+        assert.equal(run('guard.mjs', { toolName: 'str_replace_editor', toolArgs: view, cwd: repo }, extraEnv), null);
+        assert.equal(run('guard.mjs', { toolName: 'str_replace_editor', toolArgs: JSON.stringify(view), cwd: repo }, extraEnv), null);
+        assert.equal(run('guard.mjs', { hook_event_name: 'PreToolUse', tool_name: 'str_replace_editor', tool_input: view, cwd: repo }, extraEnv), null);
+        assert.equal(run('guard.mjs', { toolName: 'str_replace_editor', toolArgs: JSON.stringify(mutate), cwd: repo }, extraEnv).permissionDecision, 'deny');
+        assert.equal(run('guard.mjs', { hook_event_name: 'PreToolUse', tool_name: 'str_replace_editor', tool_input: mutate, cwd: repo }, extraEnv).hookSpecificOutput.permissionDecision, 'deny');
+      }
+    }
+  } finally {
+    execFileSync('git', ['-C', repo, 'switch', '-q', 'fix-nav'], { env });
+    execFileSync('git', ['-C', repo, 'branch', '-q', '-D', 'octo-dev-session'], { env });
+  }
 });
 
 test('session-start flags an app-created branch that breaks the rules', () => {
@@ -191,10 +337,10 @@ test('plan gate end to end: blocks a 3rd file until plan written + approved', ()
     assert.equal(edit('notes.txt').permissionDecision, 'deny', 'symlink to a contract file is gated');
     const other = join(home, 'code', 'other');
     mkdirSync(other, { recursive: true });
-    execFileSync('git', ['-C', other, 'init', '-q', '-b', 'main'], { env });
+    execFileSync('git', ['-C', other, 'init', '-q', '-b', 'other-change'], { env });
     execFileSync('git', ['-C', other, 'remote', 'add', 'origin', 'https://github.com/acme/other.git'], { env });
     const patch = `*** Begin Patch\n*** Update File: ${join(home, 'scratch.md')}\n*** Add File: ${join(other, 'package.json')}\n*** End Patch`;
-    assert.equal(run('guard.mjs', { toolName: 'apply_patch', toolArgs: { input: patch }, cwd: repo }).permissionDecision, 'deny', 'every repo in a patch is checked');
+    assert.match(run('guard.mjs', { toolName: 'apply_patch', toolArgs: { input: patch }, cwd: repo }).permissionDecisionReason, /Plan gate: .*acme\/other@other-change/, 'every repo in a patch is checked');
   } finally {
     for (const f of ['x.js', 'y.js']) rmSync(join(repo, f), { force: true });
     execFileSync('git', ['-C', repo, 'switch', '-q', 'fix-nav'], { env });
