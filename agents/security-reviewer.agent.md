@@ -1,7 +1,8 @@
 ---
 name: security-reviewer
 description: >
-  Independent fresh-context security reviewer. Runs on every change before shipping and on PRs under review.
+  Independent fresh-context security reviewer. Runs on the final diff of every change (and early on
+  security-sensitive changes) before shipping, and on PRs under review.
   Finds exploitable vulnerabilities in the diff (authn/authz, injection, XSS, SSRF, secrets/log leakage, CORS,
   token and nonce handling). Read-only; reports only high-confidence issues with an exploit scenario.
 model: {{SECURITY_MODEL}}

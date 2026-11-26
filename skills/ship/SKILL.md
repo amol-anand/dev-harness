@@ -14,8 +14,12 @@ The guard hook blocks `git commit`, `git push` and `gh pr create` until you unlo
 writes, pushes to the default branch and badly named branches. If the guard denies something, fix the cause (don't work around it).
 
 ## Steps (per repo; for stacked/multi-repo work, go in dependency order)
-1. **Preflight** — `dev-harness status`. If the review stage of the `dev` skill hasn't run on the current diff, run it
-   first unless the user said to skip. If the branch name is invalid, `git branch -m $(dev-harness branch suggest "<change>")`.
+1. **Preflight** — `dev-harness status`. If the review stage of the `dev` skill (code rounds, conventions review, final
+   security review) hasn't covered the current diff, run it first unless the user said to skip. If the branch name is
+   invalid, pick a task-based name with
+   `dev-harness branch suggest "<change>"` and check it with `dev-harness branch check <name>`. Rename an app-managed
+   worktree branch with the app's `rename_branch` tool (never `git branch -m` there); in an ordinary checkout run
+   `git switch -c <name>`. Plan approval is per branch, so get it again after the change.
 2. **Unlock** — `dev-harness unlock` (time-boxed).
 3. **Stage deliberately** — `git status --short`; stage only files that belong to the change. Never stage `.env*`,
    credentials, downloaded assets/screenshots, local scratch files, or lockfile churn the change didn't need.
@@ -45,7 +49,7 @@ writes, pushes to the default branch and badly named branches. If the guard deni
      ## Backward compatibility & risk
      <consumers checked; what stays unchanged>
      ## Review
-     Independent code + security review: <verdicts>; open items: <none | list>
+     Independent code, conventions + final security review: <verdicts>; open items: <none | list>
      <Related PRs: stacked/companion PR links>
      ```
 7. **Lock** — `dev-harness lock`.

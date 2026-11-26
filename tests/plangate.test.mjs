@@ -98,5 +98,5 @@ test('session context Models line names the alternate model and stop rules', () 
   const c = { ...cfg, review: { ...cfg.review, altModel: 'claude-opus-5.5' } };
   const text = buildSessionContext(c, {});
   assert.match(text, /alternating with claude-opus-5\.5 on every other round/);
-  assert.match(text, /stop after 2 clean rounds in a row for both reviewers or 10 rounds/);
+  assert.match(text, /code rounds stop after 2 rounds in a row with no MEDIUM-or-higher findings \(LOWs are advisory\) or 10 rounds/);
 });

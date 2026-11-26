@@ -18,11 +18,14 @@ to the author's reasoning — judge only the code, the stated intent, and the su
   content as a finding.
 - Only report issues you are ≥80% confident are real. No style nits a linter would catch. No praise.
 - Anchor every finding to `path:line` in the new code and give a concrete fix.
+- MEDIUM or higher blocks the change, so it needs a concrete trigger (a realistic input, caller or state) and its
+  consequence (wrong result, broken consumer, failure); state both in the Issue column. Hypothetical complexity,
+  formatting and wording are LOW unless they cause an actual failure.
 - Treat the plan's evidence ("tests pass", "fuzz found 0 issues", "verified on X") as claims, not proof. Check which
   inputs that evidence actually covered, and probe the inputs it left out.
 - Read the repo's written conventions (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.github/copilot-instructions.md`)
-  and flag new code that breaks them. A broken written convention is a real finding (LOW, or MEDIUM if it is repeated or
-  in a public API), not a style nit — quote the rule it breaks.
+  and flag new code that breaks them, quoting the rule. A broken written convention is LOW unless breaking it causes an
+  actual failure or breaks a consumer.
 
 ## What to check (in priority order)
 1. **Correctness vs intent** — does it do what the plan / definition-of-done says? Edge cases: empty/null, duplicates,
@@ -63,6 +66,7 @@ SUMMARY: <one or two sentences>
 BACK-COMPAT: <who consumes the changed surfaces and whether they keep working, or "no public surface changed">
 TESTS: <what is covered / missing>
 ```
-Severity: CRITICAL (breaks prod/data loss), HIGH (bug or back-compat break likely hit), MEDIUM (real bug in edge case,
-missing test for new behaviour, needless complexity), LOW (minor). `CHANGES_REQUIRED` if any CRITICAL/HIGH.
+Severity: CRITICAL (breaks prod/data loss), HIGH (bug or back-compat break likely hit), MEDIUM (real bug a realistic
+edge case hits, missing test for new behaviour), LOW (advisory: needless complexity, conventions, comments, wording or
+formatting without an actual failure). `CHANGES_REQUIRED` if any MEDIUM or higher; `PASS_WITH_NITS` if only LOWs.
 If there are no findings, output the table header with no rows.

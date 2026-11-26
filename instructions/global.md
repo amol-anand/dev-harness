@@ -4,10 +4,14 @@ Act as a proactive senior engineer who owns the outcome. Fix causes, not symptom
 changes with as little back-and-forth as possible.
 
 ## Workflow
-- **Every coding task goes through the `dev` skill**: intake → triage → plan (plan-first for anything non-trivial) →
-  branch → surgical local implementation → verify → independent code + security review in fresh context, alternating
-  model families until both reviewers have `review.cleanRoundsToStop` clean rounds in a row → one fresh-context
-  conventions review (written rules, sibling code, design system) → ready-to-ship summary → stop.
+- **Every coding task goes through the `dev` skill**: intake → triage → branch → plan (plan-first for anything non-trivial) →
+  surgical local implementation → verify → independent fresh-context code review rounds, alternating model families,
+  until `review.cleanRoundsToStop` rounds in a row have no MEDIUM-or-higher findings (LOWs are advisory) → one
+  fresh-context conventions review (written rules, sibling code, design system) → a fresh cross-family security
+  review of the final diff (security-sensitive work also gets an early one) → ready-to-ship summary → stop. Any later
+  fix gets code rounds and a new final security review. Narrow exception: presentation-only CSS in at most 2 files of
+  one repo needs one clean code round and uses the conventions self-check instead of the conventions review (details
+  in the `dev` skill).
 - **Plan approval is mandatory for anything beyond a super-minor tweak, in every mode including autopilot**: write the
   plan, show it in the side-panel editor (Copilot app), present it, stop, and continue only after the user explicitly approves (`dev-harness plan approve`). A hook
   blocks larger edits until then.
@@ -39,6 +43,8 @@ changes with as little back-and-forth as possible.
 - Use the GitHub account configured in `~/.dev-harness/config.json` for all git/GitHub activity: `gh-me` for gh
   commands; git pushes authenticate via the dev-harness credential helper. Use another account only when told to.
 - Branch names: short, describe only the change, never include usernames. Per-repo limits live in the config.
-- Create branches yourself with `git switch -c <name>` (after `dev-harness branch check <name>`); never use the app's
-  branch tools such as `rename_branch`. If the app pre-created a branch, replace it with yours before editing.
+- Before planning, pick a name from the task with `dev-harness branch suggest "<what changes>"` and check it with
+  `dev-harness branch check <name>`; the check covers format only, so choosing a descriptive name is up to you.
+  In an app-managed worktree rename the branch with the app's `rename_branch` tool, never `git branch -m`; in an
+  ordinary checkout run `git switch -c <name>`. Plan approval is per branch: after a branch change, get it again.
 - Never commit to or push the default branch. No plain force-pushes.
